@@ -120,15 +120,75 @@ test('ranks new recommendations before history and resolves score ties by stable
   assert.equal(recommendations[2].sourceMatchId, 'match-1');
 });
 
-test('keeps skip neutral and records a selected outfit as satisfied', () => {
+test('builds a complete direct outfit with outerwear, inner layer, bottoms, and shoes', () => {
+  const directItems = [
+    item('direct-anchor', '上装', '新的外衣', { topType: '外套' }),
+    item('template-outer', '上装', '模板外衣', { topType: '外套' }),
+    item('template-inner', '上装', '模板内搭', { topType: '长袖' }),
+    item('template-bottom', '下装', '模板下装', { length: '长裤' }),
+    item('template-shoe', '鞋子', '模板鞋'),
+    item('template-bag', '配饰', '模板包', { accessoryType: '包包' }),
+  ];
+  const template = match('template-1', {
+    tops: [{ primary: 'template-outer' }, { primary: 'template-inner' }],
+    bottoms: [{ primary: 'template-bottom' }],
+    shoes: [{ primary: 'template-shoe' }],
+    accessories: [{ primary: 'template-bag' }],
+  });
+  const [recommendation] = buildOutfitRecommendations('direct-anchor', [template], directItems, {
+    opportunities: [],
+    colors: [
+      { itemId: 'direct-anchor', rgb: [20, 20, 20], hex: '#141414', role: 'dominant', areaRatio: 1, lab: [7, 0, 0], oklch: [0.1, 0, 0], source: 'manual' },
+      { itemId: 'template-outer', rgb: [25, 25, 25], hex: '#191919', role: 'dominant', areaRatio: 1, lab: [9, 0, 0], oklch: [0.12, 0, 0], source: 'manual' },
+    ],
+  } as any);
+
+  assert.equal(recommendation.origin, 'direct');
+  assert.equal(recommendation.sourceMatchId, 'template-1');
+  assert.equal(recommendation.changedSlot, 'tops');
+  assert.equal(recommendation.replacedItemId, 'template-outer');
+  assert.deepEqual(recommendation.selections.map((entry) => entry.itemId), ['direct-anchor', 'template-inner', 'template-bottom', 'template-shoe', 'template-bag']);
+  assert.equal(recommendation.selections.filter((entry) => entry.slot === 'tops').length, 2);
+  assert.equal(recommendation.selections.filter((entry) => entry.slot === 'accessories').length, 1);
+  assert.match(recommendation.reasons[0].text, /成立|颜色|色彩|版型|风格/);
+});
+
+test('does not invent a direct outfit when the template lacks a complete base', () => {
+  const recommendations = buildOutfitRecommendations('direct-anchor', [sourceMatch], [
+    ...items,
+    item('direct-anchor', '上装', '新的外衣', { topType: '外套' }),
+  ], { opportunities: [] });
+
+  assert.equal(recommendations.some((entry) => entry.origin === 'direct'), false);
+});
+
+test('limits references to the canonical match followed by two variants', () => {
+  const referenceItems = [...items, item('top-other', '上装', '另一件外衣', { topType: '外套' })];
+  const referenceMatches = [
+    sourceMatch,
+    match('match-2', { tops: [{ primary: 'top-other', variants: ['top-anchor'] }], bottoms: [{ primary: 'bottom-other' }], shoes: [{ primary: 'shoe' }], accessories: [] }),
+    match('match-3', { tops: [{ primary: 'top-other', variants: ['top-anchor'] }], bottoms: [{ primary: 'bottom-new' }], shoes: [{ primary: 'shoe' }], accessories: [] }),
+    match('match-4', { tops: [{ primary: 'top-other', variants: ['top-anchor'] }], bottoms: [{ primary: 'bottom-base' }], shoes: [{ primary: 'shoe' }], accessories: [] }),
+  ];
+  const recommendations = buildOutfitRecommendations('top-anchor', referenceMatches, referenceItems, { opportunities: [] });
+  const references = recommendations.filter((entry) => entry.origin === 'reference');
+
+  assert.equal(references.length, 3);
+  assert.equal(references[0].referenceLevel, 'canonical');
+  assert.deepEqual(references.slice(1).map((entry) => entry.referenceLevel), ['variant', 'variant']);
+});
+
+test('keeps skip neutral and records fit feedback separately from wear outcome', () => {
   assert.equal(applyRecommendationEvent('presented', 'skipped'), 'presented');
+  assert.equal(applyRecommendationEvent('presented', 'marked_suitable'), 'suitable');
   assert.equal(applyRecommendationEvent('presented', 'selected_for_wear'), 'selected');
+  assert.equal(applyRecommendationEvent('suitable', 'selected_for_wear'), 'selected');
   assert.equal(applyRecommendationEvent('selected', 'worn_satisfied'), 'satisfied');
 });
 
 test('turns an exact rejection into a terminal local counterexample', () => {
-  assert.equal(applyRecommendationEvent('presented', 'rejected'), 'rejected');
-  assert.throws(() => applyRecommendationEvent('rejected', 'selected_for_wear'), /terminal recommendation state/);
+  assert.equal(applyRecommendationEvent('presented', 'marked_unsuitable'), 'unsuitable');
+  assert.throws(() => applyRecommendationEvent('unsuitable', 'selected_for_wear'), /terminal recommendation state/);
 });
 
 test('does not accept a wear outcome before the recommendation was shown', () => {

@@ -56,6 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   catch { return res.status(400).json({ error: '不支持的推荐反馈类型' }); }
   const reason = text(body.reason, 1000) || null;
   if (!idempotencyKey) return res.status(400).json({ error: '缺少幂等键' });
+  if (eventType === 'marked_unsuitable' && !reason) return res.status(400).json({ error: '不合适反馈需要填写原因' });
 
   const snapshot = jsonObject(body.recommendationSnapshot);
   const sourceMatchId = text(snapshot.sourceMatchId, 160);
