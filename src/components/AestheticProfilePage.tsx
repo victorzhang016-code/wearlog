@@ -15,16 +15,19 @@ import {
   type SubstitutionContract,
 } from '../lib/aestheticAnalysisV3';
 import { buildLiveAestheticRun, listQuickWearRecords, liveAestheticSnapshot, saveDecisionBrief, saveQuickWearRecord, type QuickWearRecord } from '../lib/aestheticProduct';
+import { buildStyleJournal, type StyleJournal, type StyleJournalChapter } from '../lib/styleJournal';
+import { persistStyleJournal, persistStyleJournalFeedback } from '../lib/styleJournalApi';
 import { listVisionAnalyses, type VisionAnalysis } from '../lib/aestheticVision';
 import { loadSyncedAestheticRun } from '../lib/aestheticRunSync';
 import { resolveMediaUrl } from '../lib/media';
 import { sfx } from '../lib/sounds';
 import { ColorSwatchCard } from './ColorSwatchCard';
 
-type View = 'principles' | 'cases' | 'substitutions' | 'calibration';
+type View = 'journal' | 'principles' | 'cases' | 'substitutions' | 'calibration';
 
 const VIEW_LABELS: Record<View, string> = {
-  principles: '我的穿衣规律',
+  journal: '我的风格志',
+  principles: '证据原则',
   cases: '搭配案例',
   substitutions: '替换关系',
   calibration: 'AI 与校准',
@@ -46,6 +49,7 @@ const OPERATION_LABELS: Record<string, string> = {
 };
 
 const FEEDBACK_KEY = 'wearlog.local.aesthetic.manual-feedback.v3';
+const JOURNAL_FEEDBACK_KEY = 'wearlog.local.aesthetic.journal-feedback.v1';
 
 function percent(value: number) { return `${Math.round(value * 100)}%`; }
 
@@ -73,6 +77,28 @@ function principlePalette(run: AnalysisRun, principle: AestheticPrinciple): stri
 function readFeedback() {
   try { return JSON.parse(window.localStorage.getItem(FEEDBACK_KEY) || '[]') as ManualFeedback[]; } catch { return []; }
 }
+
+function saveJournalFeedback(chapterId: string, feedback: 'accurate' | 'not_quite', note: string) {
+  try {
+    const current = JSON.parse(window.localStorage.getItem(JOURNAL_FEEDBACK_KEY) || '{}') as Record<string, unknown>;
+    window.localStorage.setItem(JOURNAL_FEEDBACK_KEY, JSON.stringify({ ...current, [chapterId]: { feedback, note: note.trim().slice(0, 1000), updatedAt: new Date().toISOString() } }));
+  } catch {
+    // A local feedback failure should never block reading the journal.
+  }
+}
+
+const STAGE_LABELS: Record<StyleJournal['stage'], string> = {
+  starting: '正在观察',
+  growing: '正在形成',
+  established: '已经稳定',
+};
+
+const MATURITY_LABELS: Record<StyleJournalChapter['maturity'], string> = {
+  observation: '观察中',
+  emerging: '正在形成',
+  stable: '稳定倾向',
+  explicit: '你明确写过',
+};
 
 function CompactPalette({ outfit }: { outfit: OutfitCaseGraph }) {
   const representative = ['dominant', 'secondary', 'accent'].flatMap((role) => {
@@ -184,13 +210,46 @@ function WearFeedbackPanel({ records, run, onSaved }: { records: QuickWearRecord
   </section>;
 }
 
+function StyleJournalView({ journal, run, onOpenCase }: { journal: StyleJournal; run: AnalysisRun; onOpenCase: (matchId: string) => void }) {
+  const [expanded, setExpanded] = useState('');
+  const [feedback, setFeedback] = useState<Record<string, 'accurate' | 'not_quite'>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  const submitFeedback = (chapter: StyleJournalChapter, value: 'accurate' | 'not_quite') => {
+    const note = notes[chapter.id] || '';
+    saveJournalFeedback(chapter.id, value, note);
+    setFeedback((current) => ({ ...current, [chapter.id]: value }));
+    void persistStyleJournalFeedback(journal, chapter.id, value, note).catch(() => {
+      // The local acknowledgement remains available when the optional cloud projection is unavailable.
+    });
+  };
+
+  return <div className="mt-5 space-y-5">
+    <section className="border border-stamp/30 bg-stamp/5 p-5 sm:p-7">
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="font-tag text-[10px] uppercase tracking-[0.22em] text-stamp">A personal style journal</p><h2 className="mt-2 font-story text-3xl font-semibold leading-tight">你是怎样选择衣服的</h2><p className="mt-3 max-w-3xl text-base leading-8 text-graphite/80">{journal.portrait}</p></div><span className="shrink-0 border border-stamp/35 bg-white/65 px-3 py-2 text-xs text-stamp">{STAGE_LABELS[journal.stage]}</span></div>
+      <p className="mt-5 text-xs leading-5 text-graphite/55">这份风格志只使用你确认过的衣物、搭配和文字证据。它会随着新的选择和反馈继续变化。</p>
+    </section>
+
+    <div className="grid gap-4 lg:grid-cols-2">
+      {journal.chapters.map((chapter) => {
+        const isExpanded = expanded === chapter.id;
+        const cases = chapter.caseIds.map((id) => run.outfitCases.find((entry) => entry.matchId === id)).filter(Boolean).slice(0, 3) as OutfitCaseGraph[];
+        return <article key={chapter.id} className={`border bg-tag/65 ${isExpanded ? 'border-stamp' : 'border-graphite/20'}`}>
+          <button type="button" onClick={() => setExpanded((value) => value === chapter.id ? '' : chapter.id)} className="flex w-full items-start gap-4 p-4 text-left sm:p-5"><span aria-hidden="true" className="w-8 shrink-0 italic leading-none text-graphite/30" style={{ fontFamily: 'var(--font-display)', fontSize: '1.8rem' }}>{String(journal.chapters.indexOf(chapter) + 1).padStart(2, '0')}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="border border-graphite/20 bg-white/60 px-2 py-0.5 text-[10px] text-graphite/65">{MATURITY_LABELS[chapter.maturity]}</span>{chapter.caseIds.length > 0 && <span className="text-[10px] text-graphite/50">{chapter.caseIds.length} 套案例</span>}</div><h3 className="mt-2 font-story text-xl font-semibold">{chapter.title}</h3><p className="mt-2 text-sm leading-7 text-graphite/80">{chapter.summary}</p></div>{isExpanded ? <ChevronDown className="mt-1 h-4 w-4 shrink-0" /> : <ChevronRight className="mt-1 h-4 w-4 shrink-0" />}</button>
+          {isExpanded && <div className="hairline-t p-4 sm:p-5"><div className="flex flex-wrap gap-2">{chapter.itemIds.slice(0, 8).map((itemId) => <span key={itemId} className="border border-graphite/20 bg-white/60 px-2.5 py-1.5 text-xs">{itemId}</span>)}</div>{cases.length > 0 && <div className="mt-4"><p className="text-xs text-graphite/55">代表搭配</p><div className="mt-2 flex flex-wrap gap-2">{cases.map((outfit) => <button type="button" key={outfit.matchId} onClick={() => onOpenCase(outfit.matchId)} className="border border-graphite/20 bg-white px-3 py-2 text-xs hover:border-stamp hover:text-stamp">{outfit.name || '查看搭配'}</button>)}</div></div>}{chapter.sourceIds.length > 0 && <EvidenceDrawer run={run} ids={chapter.sourceIds} />}<div className="mt-5 border-t border-graphite/15 pt-4"><div className="flex flex-wrap items-center gap-2"><span className="text-xs text-graphite/60">这段理解准确吗？</span><button type="button" onClick={() => submitFeedback(chapter, 'accurate')} className={`min-h-9 border px-3 text-xs ${feedback[chapter.id] === 'accurate' ? 'border-ink bg-ink text-white' : 'border-graphite/25 bg-white'}`}>很准确</button><button type="button" onClick={() => submitFeedback(chapter, 'not_quite')} className={`min-h-9 border px-3 text-xs ${feedback[chapter.id] === 'not_quite' ? 'border-stamp bg-stamp text-white' : 'border-graphite/25 bg-white'}`}>不完全是</button></div>{feedback[chapter.id] === 'not_quite' && <textarea value={notes[chapter.id] || ''} onChange={(event) => setNotes((current) => ({ ...current, [chapter.id]: event.target.value }))} onBlur={() => saveJournalFeedback(chapter.id, 'not_quite', notes[chapter.id] || '')} rows={2} className="mt-3 w-full border border-graphite/20 bg-white p-2 text-sm outline-none focus:border-stamp" placeholder="可以补充一句：哪里不完全是？" />}</div></div>}
+        </article>;
+      })}
+    </div>
+  </div>;
+}
+
 export function AestheticProfilePage() {
   const navigate = useNavigate();
   const { items, loading: itemsLoading } = useWardrobe();
   const { matches, loading: matchesLoading } = useBestMatches();
   const [analyses, setAnalyses] = useState<VisionAnalysis[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<View>('principles');
+  const [view, setView] = useState<View>('journal');
   const [expanded, setExpanded] = useState('');
   const [refresh, setRefresh] = useState(0);
   const [notice, setNotice] = useState('');
@@ -219,6 +278,12 @@ export function AestheticProfilePage() {
     // may intentionally cover a curated subset of the larger online wardrobe.
     return syncedRun || generatedRun;
   }, [generatedRun, syncedRun]);
+  const journal = useMemo(() => buildStyleJournal(run), [run]);
+  useEffect(() => {
+    void persistStyleJournal(journal).catch(() => {
+      // Reading and local feedback remain available if the productization migration is not deployed yet.
+    });
+  }, [journal]);
   const confirmedCount = analyses.filter((entry) => entry.status === 'confirmed').length;
   const proposed = analyses.filter((entry) => entry.status === 'proposed');
   const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
@@ -236,7 +301,7 @@ export function AestheticProfilePage() {
   return <section className="mx-auto max-w-6xl pb-14">
     <button type="button" onClick={() => { sfx.filterClick(); navigate('/'); }} className="back-link mb-4"><ArrowLeft className="h-4 w-4" />返回衣柜</button>
     <header className="grid gap-5 hairline-b pb-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-end">
-      <div><p className="font-tag text-[10px] uppercase tracking-[0.24em] text-stamp">Style Rules</p><h1 className="mt-2 font-story text-4xl font-semibold leading-tight">我的穿衣规律</h1><p className="mt-3 max-w-2xl text-sm leading-7 text-graphite/75">从你确认过的单品信息、Best Match、变体和文字说明里整理。每条规律都能回到具体搭配。</p></div>
+      <div><p className="font-tag text-[10px] uppercase tracking-[0.24em] text-stamp">Style Journal</p><h1 className="mt-2 font-story text-4xl font-semibold leading-tight">我的风格志</h1><p className="mt-3 max-w-2xl text-sm leading-7 text-graphite/75">从你确认过的单品信息、Best Match、变体和文字说明里整理。先读懂自己，再决定下一套怎么穿。</p></div>
       <dl className="grid grid-cols-3 border border-graphite/20 bg-tag/65 text-center"><div className="p-3 sm:p-4"><dd className="font-display italic text-3xl leading-none text-ink" style={{ fontFamily: 'var(--font-display)' }}>{confirmedCount}</dd><dt className="mt-1.5 font-tag text-[9px] uppercase tracking-[0.18em] text-graphite/55">已确认单品</dt></div><div className="border-x border-graphite/15 p-3 sm:p-4"><dd className="font-display italic text-3xl leading-none text-ink" style={{ fontFamily: 'var(--font-display)' }}>{run.outfitCases.length}</dd><dt className="mt-1.5 font-tag text-[9px] uppercase tracking-[0.18em] text-graphite/55">Best Match</dt></div><div className="p-3 sm:p-4"><dd className="font-display italic text-3xl leading-none text-ink" style={{ fontFamily: 'var(--font-display)' }}>{run.principles.length}</dd><dt className="mt-1.5 font-tag text-[9px] uppercase tracking-[0.18em] text-graphite/55">可追溯规律</dt></div></dl>
     </header>
 
@@ -254,6 +319,8 @@ export function AestheticProfilePage() {
 
     <nav className="sticky top-0 z-20 mt-4 border-y border-graphite/15 bg-kraft/95 py-2 backdrop-blur" aria-label="审美档案导航"><div className="hide-scrollbar flex gap-1 overflow-x-auto">{(Object.keys(VIEW_LABELS) as View[]).map((key) => <button type="button" key={key} onClick={() => { setView(key); setExpanded(''); }} className={`min-h-10 shrink-0 border px-3 text-sm ${view === key ? 'border-ink bg-ink text-white' : 'border-transparent text-graphite hover:border-graphite/25 hover:text-ink'}`}>{VIEW_LABELS[key]}</button>)}</div></nav>
     {notice && <p className="mt-4 border-l-2 border-stamp pl-3 text-sm leading-6 text-stamp">{notice}</p>}
+
+    {view === 'journal' && <StyleJournalView journal={journal} run={run} onOpenCase={(matchId) => { setView('cases'); setExpanded(matchId); }} />}
 
     {view === 'principles' && <div className="mt-5 space-y-6">
       <div className="grid gap-3 lg:grid-cols-2">{run.principles.map((principle, principleIndex) => { const palette = principlePalette(run, principle); return <article key={principle.id} className={`overflow-hidden border bg-tag/65 ${expanded === principle.id ? 'border-stamp lg:col-span-2' : 'border-graphite/20'}`}>

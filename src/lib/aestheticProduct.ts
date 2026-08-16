@@ -97,6 +97,16 @@ export function saveDecisionBrief(brief: OutfitDecisionBrief) {
   return next;
 }
 
+export function saveRecommendationRejection(targetId: string, note: string) {
+  const current = readStorage<ManualFeedback[]>(STORAGE.feedback, []);
+  const next = [
+    ...current.filter((entry) => !(entry.targetType === 'opportunity' && entry.targetId === targetId)),
+    { id: `feedback:${targetId}`, targetType: 'opportunity' as const, targetId, choice: '拒绝', note: note.trim().slice(0, 1000), updatedAt: new Date().toISOString() },
+  ];
+  window.localStorage.setItem(STORAGE.feedback, JSON.stringify(next));
+  return next;
+}
+
 export type QuickOutfitSelection = {
   slot: keyof BestMatchItems;
   index: number;
