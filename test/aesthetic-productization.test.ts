@@ -80,6 +80,40 @@ test('builds a new recommendation that keeps the anchor and changes one slot', (
   assert.equal(recommendation.reasons.length, 2);
 });
 
+test('keeps a non-top anchor when applying opportunities from its Best Match', () => {
+  const recommendations = buildOutfitRecommendations('bottom-base', [sourceMatch], [
+    ...items,
+    item('shoe-new', '鞋子', '新鞋'),
+  ], {
+    opportunities: [opportunity({ targetSlot: 'shoes', replacesItemId: 'shoe', candidateItemId: 'shoe-new', score: 9 })],
+  });
+
+  const [recommendation] = recommendations.filter((entry) => entry.kind === 'new');
+  assert.equal(recommendation.anchorItemId, 'bottom-base');
+  assert.equal(recommendation.changedSlot, 'shoes');
+  assert.deepEqual(recommendation.selections.map((entry) => entry.itemId), ['top-anchor', 'bottom-base', 'shoe-new']);
+});
+
+test('keeps a variant item as the anchor when applying a replacement opportunity', () => {
+  const variantMatch = match('variant-match', {
+    tops: [{ primary: 'top-anchor' }],
+    bottoms: [{ primary: 'bottom-other', variants: ['bottom-base'] }],
+    shoes: [{ primary: 'shoe' }],
+    accessories: [],
+  });
+
+  const recommendations = buildOutfitRecommendations('bottom-base', [variantMatch], [
+    ...items,
+    item('shoe-new', '鞋子', '新鞋'),
+  ], {
+    opportunities: [opportunity({ targetSlot: 'shoes', replacesItemId: 'shoe', candidateItemId: 'shoe-new' })],
+  });
+
+  const [recommendation] = recommendations.filter((entry) => entry.kind === 'new');
+  assert.equal(recommendation.anchorItemId, 'bottom-base');
+  assert.deepEqual(recommendation.selections.map((entry) => entry.itemId), ['top-anchor', 'bottom-base', 'shoe-new']);
+});
+
 test('removes complete combinations and exact rejected contexts', () => {
   const alreadyRecorded = match('match-2', {
     tops: [{ primary: 'top-anchor' }],

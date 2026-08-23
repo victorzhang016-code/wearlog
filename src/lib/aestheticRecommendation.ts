@@ -70,6 +70,24 @@ function matchSelections(match: BestMatch): RecommendationSelection[] {
   return SLOT_ORDER.flatMap((slot) => match.items[slot].map((entry, index) => ({ slot, index, itemId: entry.primary })));
 }
 
+function selectionsForAnchor(match: BestMatch, anchorItemId: string) {
+  const primary = matchSelections(match);
+  if (primary.some((entry) => entry.itemId === anchorItemId)) return primary;
+
+  for (const slot of SLOT_ORDER) {
+    const variantIndex = match.items[slot].findIndex((entry) => (entry.variants || []).includes(anchorItemId));
+    if (variantIndex < 0) continue;
+    const next = primary.map((selection) => (
+      selection.slot === slot && selection.index === variantIndex
+        ? { ...selection, itemId: anchorItemId }
+        : selection
+    ));
+    if (isComplete(next)) return next;
+  }
+
+  return null;
+}
+
 function isComplete(selections: RecommendationSelection[]) {
   return selections.some((entry) => entry.slot === 'tops') && selections.some((entry) => entry.slot === 'bottoms');
 }
@@ -251,17 +269,23 @@ export function buildOutfitRecommendations(
   const fresh: OutfitRecommendation[] = [];
   const seenFresh = new Set<string>();
   for (const opportunity of run.opportunities) {
-    if (opportunity.anchorItemId !== anchorItemId) continue;
-    const sourceMatch = matches.find((match) => hasAnchor(match, anchorItemId) && match.items[opportunity.targetSlot as RecommendationSlot]?.some((entry) => entry.primary === opportunity.replacesItemId));
-    if (!sourceMatch) continue;
     const slot = opportunity.targetSlot as RecommendationSlot;
     if (!SLOT_ORDER.includes(slot)) continue;
+    const sourceMatch = matches.find((match) => {
+      const primary = selectionsForAnchor(match, anchorItemId);
+      const targetIndex = match.items[slot].findIndex((entry) => entry.primary === opportunity.replacesItemId);
+      return Boolean(primary)
+        && targetIndex >= 0
+        && !primary?.some((entry) => entry.slot === slot && entry.index === targetIndex && entry.itemId === anchorItemId);
+    });
+    if (!sourceMatch) continue;
     const targetIndex = sourceMatch.items[slot].findIndex((entry) => entry.primary === opportunity.replacesItemId);
     if (targetIndex < 0) continue;
     const candidate = itemMap.get(opportunity.candidateItemId);
     const replaced = itemMap.get(opportunity.replacesItemId);
     if (!compatible(replaced, candidate, slot) || opportunity.candidateItemId === anchorItemId) continue;
-    const primary = matchSelections(sourceMatch);
+    const primary = selectionsForAnchor(sourceMatch, anchorItemId);
+    if (!primary) continue;
     const next = primary.map((selection) => selection.slot === slot && selection.index === targetIndex ? { ...selection, itemId: opportunity.candidateItemId } : selection);
     if (!isComplete(next) || !next.some((entry) => entry.itemId === anchorItemId)) continue;
     const key = recommendationContextKey({ sourceMatchId: sourceMatch.id, anchorItemId, changedSlot: slot, replacedItemId: opportunity.replacesItemId, candidateItemId: opportunity.candidateItemId });
