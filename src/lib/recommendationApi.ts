@@ -20,6 +20,8 @@ export async function recordRecommendationEvent(
       eventType,
       idempotencyKey,
       reason: reason?.trim() || undefined,
+      engineVersion: recommendation.engineVersion,
+      snapshotHash: recommendation.snapshotHash,
       recommendationSnapshot: {
         anchorItemId: recommendation.anchorItemId,
         sourceMatchId: recommendation.sourceMatchId,
@@ -28,6 +30,12 @@ export async function recordRecommendationEvent(
         changedSlot: recommendation.changedSlot,
         replacedItemId: recommendation.replacedItemId,
         candidateItemId: recommendation.candidateItemId,
+        sourceAnchorItemId: recommendation.sourceAnchorItemId,
+        recommendationTier: recommendation.tier,
+        paletteAssessment: recommendation.paletteAssessment,
+        ruleVersion: recommendation.ruleVersion,
+        engineVersion: recommendation.engineVersion,
+        snapshotHash: recommendation.snapshotHash,
       },
     }),
   });

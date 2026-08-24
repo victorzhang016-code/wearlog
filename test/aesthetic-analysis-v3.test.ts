@@ -105,6 +105,9 @@ test("does not flag a core outerwear or unrelated prose as an underused-item con
 
 test("keeps a rejected new combination as a local counterexample", () => {
   const source = structuredClone(synthetic);
+  source.wardrobeItems.push({ id: "inner-a", name: "提亮内搭", category: "上装", purchaseYear: 2025, rating: 6, story: "用浅色内搭提亮。" });
+  source.visionAnalyses.push({ id: "a-inner", itemId: "inner-a", status: "confirmed", modelVersion: "manual", payload: payload("基础款", [235, 235, 235]), updatedAt: "2026-07-22" });
+  source.bestMatches.forEach((match) => { match.items.tops.push({ primary: "inner-a" }); });
   source.wardrobeItems.push({ id: "pants-c", name: "待试下装", category: "下装", purchaseYear: 2026, rating: 8, story: "还没有和这件外套搭过。" });
   source.visionAnalyses.push({ id: "a7", itemId: "pants-c", status: "confirmed", modelVersion: "manual", payload: payload("机能", [31, 31, 36]), updatedAt: "2026-07-22" });
   const first = buildAestheticAnalysisV3(source);
@@ -270,6 +273,8 @@ test("quick mode returns recorded matches plus rule-engine candidates", () => {
   const suggested = quickOutfitOptions("coat", matches, items, {
     opportunities: [{
       id: "opportunity:coat:bottoms:pants-b",
+      sourceMatchId: "m1",
+      sourceAnchorItemId: "coat",
       anchorItemId: "coat",
       anchorItemName: "外套",
       targetSlot: "bottoms",
@@ -277,6 +282,7 @@ test("quick mode returns recorded matches plus rule-engine candidates", () => {
       replacesItemName: "长裤",
       candidateItemId: "pants-b",
       candidateItemName: "候选裤",
+      paletteAssessment: { ruleVersion: "outfit-palette-v1", status: "strict", sourceMatchId: "m1", sourceAnchorItemId: "coat", completeBase: true, relation: "ground", summary: "深色下装压住重心。", evidenceIds: [], structuralEvidenceIds: ["e:structure"], supportEdgeCount: 2, affectedSlots: ["bottoms", "shoes"] },
       reasons: ["结构条件相近"],
       evidenceIds: [],
       score: 2,

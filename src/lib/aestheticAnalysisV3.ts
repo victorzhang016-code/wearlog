@@ -7,9 +7,10 @@ import type {
   LocalSnapshot,
   LocalTag,
 } from "./aestheticContracts";
+import { PALETTE_RULE_VERSION, evaluateOutfitPalette, type PaletteAssessment, type PaletteSelection } from "./outfitPalette";
 
 export const AESTHETIC_ENGINE_VERSION = "wearlog-aesthetic-v3.5.0";
-export const AESTHETIC_V4_ENGINE_VERSION = "wearlog-aesthetic-v4.0.0";
+export const AESTHETIC_V4_ENGINE_VERSION = "wearlog-aesthetic-v4.1.0";
 export const AESTHETIC_SCHEMA_VERSION = "wearlog-aesthetic-knowledge-v3";
 export const TEXT_PROMPT_VERSION = "wearlog-explicit-intent-v1";
 export const DECISION_BRIEF_PROMPT_VERSION = "wearlog-decision-brief-v1";
@@ -76,6 +77,7 @@ export type PerceptualColor = {
   lab: [number, number, number];
   oklch: [number, number, number];
   source: LocalColor["source"];
+  evidenceStatus: "confirmed" | "proposed";
 };
 
 export type ConceptRelation = {
@@ -380,6 +382,8 @@ export type PotentialItem = {
 
 export type CombinationOpportunity = {
   id: string;
+  sourceMatchId: string;
+  sourceAnchorItemId: string;
   anchorItemId: string;
   anchorItemName: string;
   targetSlot: SlotKind;
@@ -387,9 +391,16 @@ export type CombinationOpportunity = {
   replacesItemName: string;
   candidateItemId: string;
   candidateItemName: string;
+  paletteAssessment: PaletteAssessment;
   reasons: string[];
   evidenceIds: string[];
   score: number;
+};
+
+export type OpportunityDiagnostics = {
+  strictCount: number;
+  explorationCount: number;
+  rejectedByReason: Record<string, number>;
 };
 
 export type ManualFeedback = {
@@ -442,6 +453,7 @@ export type AnalysisRun = {
   id: string;
   inputSnapshotHash: string;
   engineVersion: string;
+  recommendationRuleVersion: string;
   promptVersion: string;
   conceptGraphVersion: string;
   generatedAt: string;
@@ -464,6 +476,7 @@ export type AnalysisRun = {
   reviewQuestions: ReviewQuestion[];
   potentials: PotentialItem[];
   opportunities: CombinationOpportunity[];
+  opportunityDiagnostics: OpportunityDiagnostics;
   manualFeedback: ManualFeedback[];
   evidence: EvidenceRecord[];
   validation: ValidationReport;
@@ -639,6 +652,7 @@ function colorsFromAnalysis(analysis: LocalAnalysis): PerceptualColor[] {
     lab: rgbToLab(color.rgb),
     oklch: rgbToOklch(color.rgb),
     source: color.source,
+    evidenceStatus: analysis.status === "confirmed" ? "confirmed" : "proposed",
   }));
 }
 
@@ -1257,7 +1271,7 @@ function buildCombinationOpportunities(
   atoms: SemanticAtom[],
   colors: PerceptualColor[],
   feedback: ManualFeedback[],
-): CombinationOpportunity[] {
+): { opportunities: CombinationOpportunity[]; diagnostics: OpportunityDiagnostics } {
   const itemsById = new Map(items.map((item) => [item.id, item]));
   const atomsByItem = new Map<string, SemanticAtom[]>();
   atoms.forEach((atom) => atomsByItem.set(atom.itemId, [...(atomsByItem.get(atom.itemId) || []), atom]));
@@ -1272,6 +1286,16 @@ function buildCombinationOpportunities(
     pairedByAnchor.set(outfit.anchorItemId, paired);
   });
   const result: CombinationOpportunity[] = [];
+  const rejectedByReason = new Map<string, number>();
+  const selectionsForCase = (outfit: OutfitCaseGraph): PaletteSelection[] => {
+    const indexes = new Map<string, number>();
+    return outfit.primaryItems.flatMap((entry) => {
+      if (!['tops', 'bottoms', 'shoes', 'accessories'].includes(entry.slot)) return [];
+      const index = indexes.get(entry.slot) || 0;
+      indexes.set(entry.slot, index + 1);
+      return [{ slot: entry.slot as PaletteSelection['slot'], index, itemId: entry.itemId }];
+    });
+  };
   // A local accept/reject is a decision about this exact core + slot + candidate
   // context. It must not be proposed again on the next run. A rejection is kept
   // as a counterexample, but its natural-language reason is not over-generalised
@@ -1288,7 +1312,15 @@ function buildCombinationOpportunities(
   const usefulConcepts = new Set(["宽松体量", "收束线条", "机能表达", "正式表达", "轻盈材质", "厚重材质", "设计焦点"]);
   cases.forEach((outfit) => {
     const paired = pairedByAnchor.get(outfit.anchorItemId) || new Set<string>();
-    const targets = outfit.primaryItems.filter((item) => item.itemId !== outfit.anchorItemId && ["tops", "bottoms", "shoes", "accessories"].includes(item.slot));
+    const sourceSelections = selectionsForCase(outfit);
+    const targetIndexes = new Map<string, number>();
+    const targets = outfit.primaryItems.flatMap((item) => {
+      const index = targetIndexes.get(item.slot) || 0;
+      targetIndexes.set(item.slot, index + 1);
+      return item.itemId !== outfit.anchorItemId && ["tops", "bottoms", "shoes", "accessories"].includes(item.slot)
+        ? [{ ...item, index }]
+        : [];
+    });
     targets.forEach((target) => {
       const targetAtoms = atomsByItem.get(target.itemId) || [];
       const targetItem = itemsById.get(target.itemId);
@@ -1297,36 +1329,44 @@ function buildCombinationOpportunities(
         if (!functionCompatible(targetItem, candidate, target.slot)) return;
         const candidateSlots = historicSlots.get(candidate.id) || new Set(inferredSlots(candidate));
         if (!candidateSlots.has(target.slot)) return;
-        const candidateAtoms = atomsByItem.get(candidate.id) || [];
+        const candidateAtoms = (atomsByItem.get(candidate.id) || []).filter((atom) => atom.evidenceStatus === "confirmed");
         const sharedWithTarget = sharedConcepts(targetAtoms, candidateAtoms).filter((concept) => usefulConcepts.has(concept));
-        const pair = closestRoleAwareColorPair(colors, outfit.anchorItemId, candidate.id);
         const reasons: string[] = [];
-        const evidenceIds = [idFor("e:slot", outfit.matchId, target.slot, target.itemId)];
-        let compatibilitySignals = 0;
+        const structuralEvidenceIds: string[] = [];
         if (sharedWithTarget.length) {
-          compatibilitySignals += 1;
           reasons.push(`与现有${target.slot === "bottoms" ? "下装" : target.slot === "shoes" ? "鞋履" : target.slot === "accessories" ? "配饰" : "内搭"}共享${sharedWithTarget.slice(0, 2).join("、")}的结构或风格条件`);
-          evidenceIds.push(...candidateAtoms.filter((atom) => semanticConcepts([atom]).some((concept) => sharedWithTarget.includes(concept))).map((atom) => `e:${atom.id}`));
+          structuralEvidenceIds.push(...candidateAtoms.filter((atom) => semanticConcepts([atom]).some((concept) => sharedWithTarget.includes(concept))).map((atom) => `e:${atom.id}`));
         }
-        if (pair) {
-          const distance = deltaE76(pair.leftColor.lab, pair.rightColor.lab);
-          const lightDifference = pair.rightColor.oklch[0] - pair.leftColor.oklch[0];
-          const hasColorSignal = distance < 22 || lightDifference > 0.26 || lightDifference < -0.26;
-          if (distance < 22) { reasons.push("与核心外衣存在相近色彩关系"); compatibilitySignals += 1; }
-          else if (lightDifference > 0.26) { reasons.push("可在核心外衣之外形成更高明度的提亮"); compatibilitySignals += 1; }
-          else if (lightDifference < -0.26) { reasons.push("可用更低明度承接核心外衣"); compatibilitySignals += 1; }
-          if (hasColorSignal) evidenceIds.push(colorEvidenceId(pair.leftColor), colorEvidenceId(pair.rightColor));
+        const historicMatches = cases.filter((caseItem) => caseItem.primaryItems.some((item) => item.itemId === candidate.id && item.slot === target.slot) || caseItem.variantItems.some((item) => item.itemId === candidate.id && item.slot === target.slot));
+        if (historicMatches.length) {
+          reasons.push(`这件单品已在 ${historicMatches.length} 套已确认搭配中承担过同一位置`);
+          structuralEvidenceIds.push(...historicMatches.map((caseItem) => idFor("e:slot", caseItem.matchId, target.slot, candidate.id)));
         }
-        const historicCount = cases.filter((caseItem) => caseItem.primaryItems.some((item) => item.itemId === candidate.id && item.slot === target.slot) || caseItem.variantItems.some((item) => item.itemId === candidate.id && item.slot === target.slot)).length;
-        if (historicCount >= 2) reasons.push(`这件单品已在 ${historicCount} 套其他搭配中承担过同一槽位`);
-        // A new pairing needs both a non-generic structural/style condition and
-        // a meaningful relation to the core colour. Reuse elsewhere is only a
-        // confidence boost, never a substitute for compatibility.
-        if (compatibilitySignals < 2) return;
-        const id = idFor("opportunity", outfit.anchorItemId, target.slot, candidate.id);
+        if (!structuralEvidenceIds.length) return;
+        const nextSelections = sourceSelections.map((selection) => selection.slot === target.slot && selection.index === target.index
+          ? { ...selection, itemId: candidate.id }
+          : selection);
+        const paletteAssessment = evaluateOutfitPalette({
+          sourceCase: outfit,
+          sourceSelections,
+          selections: nextSelections,
+          changedSlot: target.slot as PaletteSelection['slot'],
+          colors,
+          structuralEvidenceIds: unique(structuralEvidenceIds),
+        });
+        if (paletteAssessment.status === "rejected") {
+          const reason = paletteAssessment.rejectionReason || "配色合同未通过";
+          rejectedByReason.set(reason, (rejectedByReason.get(reason) || 0) + 1);
+          return;
+        }
+        reasons.unshift(paletteAssessment.summary);
+        if (paletteAssessment.newVariable) reasons.push(paletteAssessment.newVariable);
+        const id = idFor("opportunity", outfit.matchId, outfit.anchorItemId, target.slot, candidate.id);
         if (decidedOpportunityIds.has(id)) return;
         result.push({
           id,
+          sourceMatchId: outfit.matchId,
+          sourceAnchorItemId: outfit.anchorItemId,
           anchorItemId: outfit.anchorItemId,
           anchorItemName: outfit.anchorItemName,
           targetSlot: target.slot,
@@ -1335,13 +1375,22 @@ function buildCombinationOpportunities(
           candidateItemId: candidate.id,
           candidateItemName: candidate.name || candidate.id,
           reasons: unique(reasons),
-          evidenceIds: unique(evidenceIds),
-          score: reasons.length + sharedWithTarget.length * 0.5 + Math.min(historicCount, 3) * 0.25,
+          paletteAssessment,
+          evidenceIds: unique([...paletteAssessment.evidenceIds, ...structuralEvidenceIds]),
+          score: (paletteAssessment.status === "strict" ? 100 : 40) + paletteAssessment.supportEdgeCount * 4 + structuralEvidenceIds.length * 1.5 + Math.min(ratingOf(candidate) || 0, 10) * 0.2,
         });
       });
     });
   });
-  return result.sort((left, right) => right.score - left.score).slice(0, 12);
+  const opportunities = result.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
+  return {
+    opportunities,
+    diagnostics: {
+      strictCount: opportunities.filter((opportunity) => opportunity.paletteAssessment.status === "strict").length,
+      explorationCount: opportunities.filter((opportunity) => opportunity.paletteAssessment.status === "exploration").length,
+      rejectedByReason: Object.fromEntries([...rejectedByReason.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))),
+    },
+  };
 }
 
 type SilhouetteShape = SilhouettePairingRule["topShape"];
@@ -1687,7 +1736,8 @@ export function buildAestheticAnalysisV3(
   const reviewQuestions = buildReviewQuestions(outfitCases, substitutions, claims, options.bodyProfileText || "");
   const principles = buildPrinciples(outfitCases, validation, reviewQuestions);
   const potentials = buildPotentials(snapshot.wardrobeItems, outfitCases, evidence, feedback);
-  const opportunities = buildCombinationOpportunities(snapshot.wardrobeItems, outfitCases, atoms, colors, feedback);
+  const opportunityBuild = buildCombinationOpportunities(snapshot.wardrobeItems, outfitCases, atoms, colors, feedback);
+  const opportunities = opportunityBuild.opportunities;
   const silhouetteRules = buildSilhouettePairingRules(outfitCases, atoms);
   const designHighlights = buildDesignHighlightInsights(outfitCases, atoms, itemsById, claims);
   const colorInsights = buildColorInsights(outfitCases, colors, itemsById);
@@ -1698,6 +1748,7 @@ export function buildAestheticAnalysisV3(
     id: idFor("run", generatedAt, manifest.sourceSha256.slice(0, 16), AESTHETIC_ENGINE_VERSION),
     inputSnapshotHash: manifest.sourceSha256,
     engineVersion: AESTHETIC_ENGINE_VERSION,
+    recommendationRuleVersion: PALETTE_RULE_VERSION,
     promptVersion: TEXT_PROMPT_VERSION,
     conceptGraphVersion: CONCEPT_GRAPH_VERSION,
     generatedAt,
@@ -1717,6 +1768,7 @@ export function buildAestheticAnalysisV3(
     reviewQuestions,
     potentials,
     opportunities,
+    opportunityDiagnostics: opportunityBuild.diagnostics,
     manualFeedback: feedback,
     evidence,
     validation,

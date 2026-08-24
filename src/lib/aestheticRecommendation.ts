@@ -1,5 +1,6 @@
 import type { CombinationOpportunity, OutfitCaseGraph, PerceptualColor, SemanticAtom } from './aestheticAnalysisV3';
 import type { BestMatch, BestMatchItems, BestMatchSlot, WardrobeItem } from '../types';
+import { PALETTE_RULE_VERSION, evaluateOutfitPalette, type PaletteAssessment, type PaletteSelection, type PaletteSlot } from './outfitPalette';
 
 export type RecommendationSlot = keyof BestMatchItems;
 
@@ -16,6 +17,7 @@ export type RecommendationReason = {
 
 export type RecommendationOrigin = 'replacement' | 'direct' | 'reference';
 export type RecommendationReferenceLevel = 'canonical' | 'variant';
+export type RecommendationTier = 'strict' | 'exploration';
 
 export type OutfitRecommendation = {
   id: string;
@@ -30,12 +32,21 @@ export type OutfitRecommendation = {
   replacedItemId?: string;
   candidateItemId?: string;
   opportunityId?: string;
+  tier?: RecommendationTier;
+  paletteAssessment?: PaletteAssessment;
+  sourceAnchorItemId?: string;
+  ruleVersion?: string;
+  snapshotHash?: string;
+  engineVersion?: string;
   reasons: RecommendationReason[];
   confidence: 'early' | 'supported';
   score: number;
 };
 
 export type RecommendationRun = {
+  inputSnapshotHash?: string;
+  engineVersion?: string;
+  recommendationRuleVersion?: string;
   opportunities: CombinationOpportunity[];
   outfitCases?: OutfitCaseGraph[];
   atoms?: SemanticAtom[];
@@ -174,28 +185,54 @@ function historyRecommendation(match: BestMatch, anchorItemId: string, selection
   };
 }
 
-function colorDistance(left: PerceptualColor, right: PerceptualColor) {
-  return Math.sqrt(left.lab.reduce((sum, value, index) => sum + (value - right.lab[index]) ** 2, 0));
-}
-
-function directReasons(anchor: WardrobeItem, replaced: WardrobeItem, run: RecommendationRun) {
+function structuralReasons(anchor: WardrobeItem, replaced: WardrobeItem, run: RecommendationRun) {
   const reasons: RecommendationReason[] = [];
   const anchorAtoms = (run.atoms || []).filter((atom) => atom.itemId === anchor.id && atom.evidenceStatus === 'confirmed');
   const replacedAtoms = (run.atoms || []).filter((atom) => atom.itemId === replaced.id && atom.evidenceStatus === 'confirmed');
   const sharedAtoms = anchorAtoms.filter((left) => replacedAtoms.some((right) => left.normalized && left.normalized === right.normalized)).slice(0, 2);
   if (sharedAtoms.length) reasons.push({ text: `两件单品共享${sharedAtoms.map((atom) => atom.value).join('、')}的风格或结构条件`, evidenceIds: sharedAtoms.map((atom) => `e:${atom.id}`) });
-  const anchorColor = run.colors?.find((color) => color.itemId === anchor.id);
-  const replacedColor = run.colors?.find((color) => color.itemId === replaced.id);
-  if (anchorColor && replacedColor) {
-    const distance = colorDistance(anchorColor, replacedColor);
-    const lightDifference = replacedColor.oklch[0] - anchorColor.oklch[0];
-    if (distance < 22) reasons.push({ text: '两件单品处在相近色彩关系里，可以把整体连接起来', evidenceIds: [`e:color:${anchor.id}`, `e:color:${replaced.id}`] });
-    else if (Math.abs(lightDifference) > 0.26) reasons.push({ text: lightDifference > 0 ? '用更高明度的单品提亮核心层次' : '用更低明度的单品承接核心重心', evidenceIds: [`e:color:${anchor.id}`, `e:color:${replaced.id}`] });
-  }
   if (anchor.category === replaced.category && ((anchor.topType && anchor.topType === replaced.topType) || (anchor.length && anchor.length === replaced.length))) {
     reasons.push({ text: '两件单品承担相近的功能位置，替换后不会破坏基础结构', evidenceIds: [`e:slot:${replaced.id}`] });
   }
   return reasons;
+}
+
+function asPaletteSelections(selections: RecommendationSelection[]) {
+  return selections as PaletteSelection[];
+}
+
+function assessmentFor(
+  run: RecommendationRun,
+  sourceMatch: BestMatch,
+  sourceSelections: RecommendationSelection[],
+  selections: RecommendationSelection[],
+  changedSlot: RecommendationSlot,
+  structural: RecommendationReason[],
+) {
+  const sourceCase = run.outfitCases?.find((entry) => entry.matchId === sourceMatch.id);
+  if (!sourceCase || !run.colors?.length) return null;
+  return evaluateOutfitPalette({
+    sourceCase,
+    sourceSelections: asPaletteSelections(sourceSelections),
+    selections: asPaletteSelections(selections),
+    changedSlot: changedSlot as PaletteSlot,
+    colors: run.colors,
+    structuralEvidenceIds: structural.flatMap((reason) => reason.evidenceIds),
+  });
+}
+
+function scoreRecommendation(assessment: PaletteAssessment, structural: RecommendationReason[], candidate?: WardrobeItem, opportunityScore = 0) {
+  const rating = typeof candidate?.rating === 'number' && Number.isFinite(candidate.rating) ? candidate.rating : 0;
+  const feedbackScore = opportunityScore > 0 ? Math.min(opportunityScore, 160) * 0.05 : 0;
+  return (assessment.status === 'strict' ? 1000 : 100) + assessment.supportEdgeCount * 30 + structural.length * 12 + rating + feedbackScore;
+}
+
+function reasonsFor(assessment: PaletteAssessment, structural: RecommendationReason[]) {
+  return [
+    { text: assessment.summary, evidenceIds: assessment.evidenceIds },
+    ...structural,
+    ...(assessment.newVariable ? [{ text: assessment.newVariable, evidenceIds: assessment.evidenceIds }] : []),
+  ];
 }
 
 function directRecommendation(
@@ -210,11 +247,13 @@ function directRecommendation(
   const targetEntry = match.items[targetSlot][targetIndex];
   const replaced = items.get(targetEntry.primary);
   if (!replaced || replaced.id === anchor.id) return null;
-  const reasons = directReasons(anchor, replaced, run);
-  if (reasons.length < 2) return null;
+  const structural = structuralReasons(anchor, replaced, run);
+  if (!structural.length) return null;
   const primary = matchSelections(match);
   const next = primary.map((selection) => selection.slot === targetSlot && selection.index === targetIndex ? { ...selection, itemId: anchor.id } : selection);
   if (!isCompleteBase(next)) return null;
+  const assessment = assessmentFor(run, match, primary, next, targetSlot, structural);
+  if (!assessment || assessment.status === 'rejected') return null;
   const trimmed = trimAccessories(next);
   const key = recommendationContextKey({ sourceMatchId: match.id, anchorItemId, changedSlot: targetSlot, replacedItemId: replaced.id, candidateItemId: anchor.id });
   return {
@@ -228,10 +267,68 @@ function directRecommendation(
     changedSlot: targetSlot,
     replacedItemId: replaced.id,
     candidateItemId: anchor.id,
-    reasons,
-    confidence: reasons.length >= 3 ? 'supported' : 'early',
-    score: reasons.length + (trimmed.some((entry) => entry.slot === 'accessories') ? 0.2 : 0),
+    tier: assessment.status,
+    paletteAssessment: assessment,
+    sourceAnchorItemId: assessment.sourceAnchorItemId,
+    ruleVersion: assessment.ruleVersion,
+    snapshotHash: run.inputSnapshotHash,
+    engineVersion: run.engineVersion,
+    reasons: reasonsFor(assessment, structural),
+    confidence: assessment.status === 'strict' ? 'supported' : 'early',
+    score: scoreRecommendation(assessment, structural, anchor),
   };
+}
+
+function directAccessoryRecommendation(
+  match: BestMatch,
+  anchorItemId: string,
+  anchor: WardrobeItem,
+  items: Map<string, WardrobeItem>,
+  run: RecommendationRun,
+): OutfitRecommendation | null {
+  if (anchor.category !== '配饰') return null;
+  const primary = matchSelections(match);
+  const next = [...primary, { slot: 'accessories' as const, index: 0, itemId: anchorItemId }];
+  if (!isCompleteBase(next)) return null;
+  const core = items.get(match.items.tops[0]?.primary || '');
+  if (!core) return null;
+  const structural = structuralReasons(anchor, core, run);
+  if (!structural.length) return null;
+  const assessment = assessmentFor(run, match, primary, next, 'accessories', structural);
+  if (!assessment || assessment.status === 'rejected') return null;
+  const key = recommendationContextKey({ sourceMatchId: match.id, anchorItemId, changedSlot: 'accessories', replacedItemId: 'none', candidateItemId: anchorItemId });
+  return {
+    id: `direct:${key}`,
+    recommendationKey: key,
+    anchorItemId,
+    sourceMatchId: match.id,
+    kind: 'new',
+    origin: 'direct',
+    selections: trimAccessories(next),
+    changedSlot: 'accessories',
+    candidateItemId: anchorItemId,
+    tier: assessment.status,
+    paletteAssessment: assessment,
+    sourceAnchorItemId: assessment.sourceAnchorItemId,
+    ruleVersion: assessment.ruleVersion,
+    snapshotHash: run.inputSnapshotHash,
+    engineVersion: run.engineVersion,
+    reasons: reasonsFor(assessment, structural),
+    confidence: assessment.status === 'strict' ? 'supported' : 'early',
+    score: scoreRecommendation(assessment, structural, anchor),
+  };
+}
+
+export function isPaletteRecommendationRunCurrent(run: RecommendationRun | null | undefined, currentSnapshotHash: string) {
+  if (!run || run.inputSnapshotHash !== currentSnapshotHash || run.recommendationRuleVersion !== PALETTE_RULE_VERSION) return false;
+  if (!Array.isArray(run.outfitCases) || !Array.isArray(run.colors)) return false;
+  return run.opportunities.every((opportunity) => (
+    Boolean(opportunity.sourceMatchId)
+    && Boolean(opportunity.sourceAnchorItemId)
+    && opportunity.paletteAssessment?.ruleVersion === PALETTE_RULE_VERSION
+    && opportunity.paletteAssessment.sourceMatchId === opportunity.sourceMatchId
+    && opportunity.paletteAssessment.sourceAnchorItemId === opportunity.sourceAnchorItemId
+  ));
 }
 
 export function buildOutfitRecommendations(
@@ -271,13 +368,10 @@ export function buildOutfitRecommendations(
   for (const opportunity of run.opportunities) {
     const slot = opportunity.targetSlot as RecommendationSlot;
     if (!SLOT_ORDER.includes(slot)) continue;
-    const sourceMatch = matches.find((match) => {
-      const primary = selectionsForAnchor(match, anchorItemId);
-      const targetIndex = match.items[slot].findIndex((entry) => entry.primary === opportunity.replacesItemId);
-      return Boolean(primary)
-        && targetIndex >= 0
-        && !primary?.some((entry) => entry.slot === slot && entry.index === targetIndex && entry.itemId === anchorItemId);
-    });
+    // An opportunity is a contract with one specific Best Match. Never borrow its
+    // colour evidence for another skeleton merely because the target slot happens
+    // to contain the same item.
+    const sourceMatch = matches.find((match) => match.id === opportunity.sourceMatchId);
     if (!sourceMatch) continue;
     const targetIndex = sourceMatch.items[slot].findIndex((entry) => entry.primary === opportunity.replacesItemId);
     if (targetIndex < 0) continue;
@@ -287,7 +381,14 @@ export function buildOutfitRecommendations(
     const primary = selectionsForAnchor(sourceMatch, anchorItemId);
     if (!primary) continue;
     const next = primary.map((selection) => selection.slot === slot && selection.index === targetIndex ? { ...selection, itemId: opportunity.candidateItemId } : selection);
-    if (!isComplete(next) || !next.some((entry) => entry.itemId === anchorItemId)) continue;
+    if (!isCompleteBase(next) || !next.some((entry) => entry.itemId === anchorItemId)) continue;
+    const structural = opportunity.reasons
+      .filter((reason) => !/色彩|颜色|明度|重心|鞋履/.test(reason))
+      .map((text) => ({ text, evidenceIds: opportunity.paletteAssessment.structuralEvidenceIds }));
+    const liveAssessment = assessmentFor(run, sourceMatch, matchSelections(sourceMatch), next, slot, structural);
+    const assessment = liveAssessment || opportunity.paletteAssessment;
+    if (assessment.status === 'rejected') continue;
+    if (assessment.sourceMatchId !== sourceMatch.id || assessment.sourceAnchorItemId !== opportunity.sourceAnchorItemId) continue;
     const key = recommendationContextKey({ sourceMatchId: sourceMatch.id, anchorItemId, changedSlot: slot, replacedItemId: opportunity.replacesItemId, candidateItemId: opportunity.candidateItemId });
     if (options.rejectedKeys?.has(key) || options.resolvedKeys?.has(key) || recordedCompositions.has(selectionKey(next)) || seenFresh.has(key)) continue;
     seenFresh.add(key);
@@ -303,34 +404,28 @@ export function buildOutfitRecommendations(
       replacedItemId: opportunity.replacesItemId,
       candidateItemId: opportunity.candidateItemId,
       opportunityId: opportunity.id,
-      reasons: opportunity.reasons.map((text) => ({ text, evidenceIds: opportunity.evidenceIds })),
-      confidence: opportunity.score >= 6 ? 'supported' : 'early',
-      score: opportunity.score,
+      tier: assessment.status,
+      paletteAssessment: assessment,
+      sourceAnchorItemId: assessment.sourceAnchorItemId,
+      ruleVersion: assessment.ruleVersion,
+      snapshotHash: run.inputSnapshotHash,
+      engineVersion: run.engineVersion,
+      reasons: reasonsFor(assessment, structural),
+      confidence: assessment.status === 'strict' ? 'supported' : 'early',
+      score: scoreRecommendation(assessment, structural, candidate, opportunity.score),
     });
   }
 
   for (const match of matches) {
     if (hasAnchor(match, anchorItemId)) continue;
     const directSlots = SLOT_ORDER.filter((slot) => slot !== 'accessories' && match.items[slot].length > 0 && SLOT_CATEGORY[slot] === itemMap.get(anchorItemId)?.category);
-    const accessorySlots = match.items.accessories.length <= 1 ? ['accessories' as RecommendationSlot] : [];
+    const accessorySlots = anchor.category === '配饰' && match.items.accessories.length === 0 ? ['accessories' as RecommendationSlot] : [];
     for (const slot of [...directSlots, ...accessorySlots]) {
-      const targetIndexes = match.items[slot].length ? match.items[slot].map((_, index) => index) : [0];
+      const targetIndexes = match.items[slot].map((_, index) => index);
+      if (slot === 'accessories' && !targetIndexes.length) targetIndexes.push(0);
       for (const targetIndex of targetIndexes) {
         const recommendation = slot === 'accessories' && !match.items.accessories.length
-          ? (() => {
-            const primary = matchSelections(match);
-            const next = [...primary, { slot: 'accessories' as const, index: 0, itemId: anchorItemId }];
-            if (!isCompleteBase(next)) return null;
-            const sourceBase = match.items.tops[0] ? itemMap.get(match.items.tops[0].primary) : undefined;
-            const reasons = sourceBase ? directReasons(anchor, sourceBase, run) : [];
-            if (reasons.length < 2) return null;
-            const key = recommendationContextKey({ sourceMatchId: match.id, anchorItemId, changedSlot: 'accessories', replacedItemId: 'none', candidateItemId: anchorItemId });
-            return {
-              id: `direct:${key}`, recommendationKey: key, anchorItemId, sourceMatchId: match.id, kind: 'new' as const, origin: 'direct' as const,
-              selections: trimAccessories(next), changedSlot: 'accessories' as const, replacedItemId: undefined, candidateItemId: anchorItemId,
-              reasons, confidence: reasons.length >= 3 ? 'supported' as const : 'early' as const, score: reasons.length,
-            };
-          })()
+          ? directAccessoryRecommendation(match, anchorItemId, anchor, itemMap, run)
           : directRecommendation(match, anchorItemId, itemMap.get(anchorItemId)!, slot, targetIndex, itemMap, run);
         if (!recommendation) continue;
         const composition = selectionKey(recommendation.selections);
@@ -342,12 +437,15 @@ export function buildOutfitRecommendations(
   }
 
   const sortedFresh = fresh.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));
+  const strictFresh = sortedFresh.filter((recommendation) => recommendation.tier === 'strict');
+  const explorationFresh = sortedFresh.filter((recommendation) => recommendation.tier === 'exploration');
+  const maxStrict = Math.min(options.maxNew ?? 3, 3);
   const referenceRank = (recommendation: OutfitRecommendation) => recommendation.referenceLevel === 'canonical' ? 0 : 1;
   const sortedHistory = history
     .sort((left, right) => referenceRank(left) - referenceRank(right) || left.sourceMatchId.localeCompare(right.sourceMatchId) || left.id.localeCompare(right.id))
     .slice(0, options.maxHistory ?? 3);
   return [
-    ...sortedFresh.slice(0, options.maxNew ?? sortedFresh.length),
+    ...(strictFresh.length ? strictFresh.slice(0, maxStrict) : explorationFresh.slice(0, 1)),
     ...sortedHistory,
   ];
 }

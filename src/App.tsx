@@ -27,10 +27,6 @@ import { consumeRecoverySession, hasRecoverySession, supabase } from './lib/supa
 import { consumeOnboardingIntent, getOnboardingIntent, safeOnboardingPath } from './lib/onboarding';
 import { Loader2 } from 'lucide-react';
 
-const LocalAestheticLabPage = import.meta.env.DEV
-  ? lazy(() => import('./components/LocalAestheticLabPage').then((module) => ({default: module.LocalAestheticLabPage})))
-  : null;
-
 const UiPreviewPage = import.meta.env.DEV
   ? lazy(() => import('./components/UiPreviewPage'))
   : null;
@@ -357,16 +353,6 @@ export default function App() {
           <Route path="/auth-check" element={<SupabaseAuthCheck />} />
           <Route path="/auth/confirm" element={<EmailConfirmPage />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          {LocalAestheticLabPage && (
-            <Route
-              path="/aesthetic-lab/local"
-              element={
-                <Suspense fallback={<div className="min-h-screen bg-kraft" />}>
-                  <LocalAestheticLabPage />
-                </Suspense>
-              }
-            />
-          )}
           {UiPreviewPage && (
             <Route
               path="/ui-preview"

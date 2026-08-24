@@ -193,15 +193,11 @@ export function quickOutfitOptions(anchorItemId: string, matches: BestMatch[], i
   // source Best Match context; they are not silently promoted to a confirmed
   // outfit.
   if (run) {
-    const opportunities = run.opportunities.filter((entry) => entry.anchorItemId === anchorItemId);
+    const opportunities = run.opportunities.filter((entry) => entry.anchorItemId === anchorItemId && entry.paletteAssessment?.status === 'strict');
     for (const opportunity of opportunities) {
       const candidate = itemMap.get(opportunity.candidateItemId);
       if (!candidate || candidate.id === anchorItemId) continue;
-      const sourceMatch = matches.find((match) => {
-        const primary = selectionsForMatch(match, itemMap);
-        return primary.some((selection) => selection.item.id === anchorItemId)
-          && primary.some((selection) => selection.slot === opportunity.targetSlot && selection.item.id === opportunity.replacesItemId);
-      });
+      const sourceMatch = matches.find((match) => match.id === opportunity.sourceMatchId);
       if (!sourceMatch) continue;
       const primary = selectionsForMatch(sourceMatch, itemMap);
       const targetIndex = primary.findIndex((selection) => selection.slot === opportunity.targetSlot && selection.item.id === opportunity.replacesItemId);
