@@ -1,6 +1,8 @@
 import type { BestMatch, WardrobeItem } from "../types";
 import type { AnalysisRun } from "./aestheticAnalysisV3";
 
+export const STYLE_INSIGHT_TIMEOUT_MS = 150_000;
+
 export type InsightQuote = { matchId: string; text: string };
 export type StyleInsight = {
   id: string;

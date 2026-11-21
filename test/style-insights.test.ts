@@ -192,3 +192,19 @@ test("DeepSeek uses OpenAI image blocks with thinking disabled; network response
     globalThis.fetch = original;
   }
 });
+import { readFileSync } from 'node:fs';
+import { STYLE_INSIGHT_TIMEOUT_MS } from '../src/lib/styleInsights';
+
+test('the hosted function can finish a long insight request before the client deadline', async () => {
+  const vercel=JSON.parse(readFileSync(new URL('../vercel.json',import.meta.url),'utf8'));
+  assert.ok(STYLE_INSIGHT_TIMEOUT_MS > 60_000);
+  assert.ok(vercel.functions['api/ai-import.ts'].maxDuration * 1000 > STYLE_INSIGHT_TIMEOUT_MS + 10_000);
+  const originalFetch=globalThis.fetch, originalTimeout=AbortSignal.timeout;
+  let requestedTimeout=0;
+  try {
+    AbortSignal.timeout=(ms)=>{ requestedTimeout=ms;return new AbortController().signal; };
+    globalThis.fetch=async()=>new Response('{}');
+    await aiFetch(aiProvider({KIMI_API_KEY:'test'}),{messages:[]},STYLE_INSIGHT_TIMEOUT_MS);
+    assert.equal(requestedTimeout,STYLE_INSIGHT_TIMEOUT_MS);
+  } finally { globalThis.fetch=originalFetch;AbortSignal.timeout=originalTimeout; }
+});

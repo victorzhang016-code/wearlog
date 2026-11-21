@@ -1,6 +1,7 @@
 import { aiFetch, aiProvider } from "./aiProvider.js";
 import {
   STYLE_INSIGHT_PROMPT,
+  STYLE_INSIGHT_TIMEOUT_MS,
   validateAIInsights,
   type StyleEvidence,
 } from "../../src/lib/styleInsights.js";
@@ -58,7 +59,7 @@ export async function analyzeStyleEvidence(
         ),
       },
     ],
-  }).catch((error: Error) => {
+  }, STYLE_INSIGHT_TIMEOUT_MS).catch((error: Error) => {
     throw new Error(
       error.name === "TimeoutError"
         ? "分析时间较长，请稍后重试"

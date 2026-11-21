@@ -44,6 +44,7 @@ export function aiProvider(
 export async function aiFetch(
   config: ReturnType<typeof aiProvider>,
   body: Record<string, unknown>,
+  timeoutMs = 55_000,
 ) {
   if (!config.key) throw new Error("AI 服务尚未配置密钥");
   return fetch(config.endpoint, {
@@ -53,6 +54,6 @@ export async function aiFetch(
       "content-type": "application/json",
     },
     body: JSON.stringify({ ...body, model: config.model, ...config.options }),
-    signal: AbortSignal.timeout(55_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 }

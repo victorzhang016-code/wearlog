@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { validateAIInsights, type StyleEvidence } from "./styleInsights";
+import { validateAIInsights, STYLE_INSIGHT_TIMEOUT_MS, type StyleEvidence } from "./styleInsights";
 
 export async function requestStyleInsights(evidence: StyleEvidence[]) {
   let token = "";
@@ -19,7 +19,7 @@ export async function requestStyleInsights(evidence: StyleEvidence[]) {
         ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ task: "style_insights", evidence }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(STYLE_INSIGHT_TIMEOUT_MS + 10_000),
     },
   );
   const body = await response.json().catch(() => ({}));
