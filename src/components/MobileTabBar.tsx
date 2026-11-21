@@ -4,7 +4,7 @@ import { Shirt, Tags, Ruler } from 'lucide-react';
 const TABS = [
   { to: '/', label: '衣柜', icon: Shirt, end: true },
   { to: '/best-match', label: 'Best Match', icon: Tags, end: false },
-  { to: '/aesthetic', label: '我的穿衣规律', icon: Ruler, end: false },
+  { to: '/aesthetic', label: '我的风格志', icon: Ruler, end: false },
 ] as const;
 
 /**

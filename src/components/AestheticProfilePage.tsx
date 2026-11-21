@@ -1,347 +1,123 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Loader2, Palette, RefreshCw, ScanText, Sparkles } from 'lucide-react';
-import { useNavigate } from 'react-router';
-import { useBestMatches } from '../contexts/BestMatchContext';
-import { useWardrobe } from '../contexts/WardrobeContext';
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, RefreshCw } from "lucide-react";
+import { useWardrobe } from "../contexts/WardrobeContext";
+import { useBestMatches } from "../contexts/BestMatchContext";
 import {
-  authorizeKimiDecisionBrief,
-  buildKimiDecisionBriefRequest,
-  requestKimiDecisionBrief,
+  buildAestheticAnalysisV4,
   type AnalysisRun,
-  type AestheticPrinciple,
-  type ManualFeedback,
-  type OutfitDecisionBrief,
-  type OutfitCaseGraph,
-  type SubstitutionContract,
-} from '../lib/aestheticAnalysisV3';
-import { buildLiveAestheticRun, listQuickWearRecords, liveAestheticSnapshot, saveDecisionBrief, saveQuickWearRecord, type QuickWearRecord } from '../lib/aestheticProduct';
-import { buildStyleJournal, type StyleJournal, type StyleJournalChapter } from '../lib/styleJournal';
-import { persistStyleJournal, persistStyleJournalFeedback } from '../lib/styleJournalApi';
-import { listVisionAnalyses, type VisionAnalysis } from '../lib/aestheticVision';
-import { loadSyncedAestheticRun } from '../lib/aestheticRunSync';
-import { resolveMediaUrl } from '../lib/media';
-import { sfx } from '../lib/sounds';
-import { ColorSwatchCard } from './ColorSwatchCard';
-
-type View = 'journal' | 'principles' | 'cases' | 'substitutions' | 'calibration';
-
-const VIEW_LABELS: Record<View, string> = {
-  journal: '我的风格志',
-  principles: '证据原则',
-  cases: '搭配案例',
-  substitutions: '替换关系',
-  calibration: 'AI 与校准',
-};
-
-const PRINCIPLE_LABELS = {
-  self_aware: '你明确写过',
-  enacted: '常穿搭配中成立',
-  emerging: '初步模式',
-  frontier: '值得继续验证',
-  case_only: '单套记录',
-};
-
-const OPERATION_LABELS: Record<string, string> = {
-  color_echo: '色彩呼应', color_lighten: '明度提亮', color_ground: '低明度收束',
-  volume_balance: '廓形平衡', line_continue: '线条延续', material_harmony: '材质协调',
-  material_tension: '材质张力', formality_adjust: '正式度调节', focus_control: '设计焦点控制',
-  identity_expression: '故事与身份表达',
-};
-
-const FEEDBACK_KEY = 'wearlog.local.aesthetic.manual-feedback.v3';
-const JOURNAL_FEEDBACK_KEY = 'wearlog.local.aesthetic.journal-feedback.v1';
-
-function percent(value: number) { return `${Math.round(value * 100)}%`; }
-
-function humanizeDisplayText(value: string) {
-  return value
-    .replaceAll('候选字段', '待确认信息')
-    .replaceAll('字段', '服装信息')
-    .replaceAll('规则引擎', '分析方法')
-    .replaceAll('DecisionMechanism', '搭配决策记录');
-}
-
-/** 原则的色条锚点：取首个代表搭配的 主/辅/点缀 色；无数据时给中性细线 */
-function principlePalette(run: AnalysisRun, principle: AestheticPrinciple): string[] {
-  for (const id of principle.representativeMatchIds) {
-    const outfit = run.outfitCases.find((o) => o.matchId === id);
-    if (!outfit) continue;
-    const pal = (['dominant', 'secondary', 'accent'] as const)
-      .map((role) => outfit.composition.colorPalette.find((e) => e.role === role)?.hex)
-      .filter((hex): hex is string => Boolean(hex));
-    if (pal.length) return pal;
-  }
-  return [];
-}
-
-function readFeedback() {
-  try { return JSON.parse(window.localStorage.getItem(FEEDBACK_KEY) || '[]') as ManualFeedback[]; } catch { return []; }
-}
-
-function saveJournalFeedback(chapterId: string, feedback: 'accurate' | 'not_quite', note: string) {
-  try {
-    const current = JSON.parse(window.localStorage.getItem(JOURNAL_FEEDBACK_KEY) || '{}') as Record<string, unknown>;
-    window.localStorage.setItem(JOURNAL_FEEDBACK_KEY, JSON.stringify({ ...current, [chapterId]: { feedback, note: note.trim().slice(0, 1000), updatedAt: new Date().toISOString() } }));
-  } catch {
-    // A local feedback failure should never block reading the journal.
-  }
-}
-
-const STAGE_LABELS: Record<StyleJournal['stage'], string> = {
-  starting: '正在观察',
-  growing: '正在形成',
-  established: '已经稳定',
-};
-
-const MATURITY_LABELS: Record<StyleJournalChapter['maturity'], string> = {
-  observation: '观察中',
-  emerging: '正在形成',
-  stable: '稳定倾向',
-  explicit: '你明确写过',
-};
-
-function CompactPalette({ outfit }: { outfit: OutfitCaseGraph }) {
-  const representative = ['dominant', 'secondary', 'accent'].flatMap((role) => {
-    const found = outfit.composition.colorPalette.find((entry) => entry.role === role);
-    return found ? [found] : [];
-  });
-  return <div className="mt-3 flex flex-wrap items-end gap-3">{representative.map((entry, index) => <ColorSwatchCard key={`${entry.itemId}:${entry.role}:${index}`} size="sm" color={(() => { const num = parseInt(entry.hex.slice(1), 16); return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 }; })()} role={`${entry.role === 'dominant' ? '主色' : entry.role === 'secondary' ? '辅色' : '点缀色'} · ${entry.family}`} />)}</div>;
-}
-
-function EvidenceDrawer({ run, ids }: { run: AnalysisRun; ids: string[] }) {
-  const evidence = ids.map((id) => run.evidence.find((entry) => entry.id === id)).filter(Boolean).slice(0, 16);
-  return <details className="mt-4 hairline-t pt-3"><summary className="cursor-pointer text-xs text-graphite underline decoration-graphite/25 underline-offset-4">查看来源</summary><div className="mt-3 grid gap-2 sm:grid-cols-2">{evidence.map((entry) => <div key={entry!.id} className="border border-graphite/15 bg-kraft/45 p-2"><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium">{entry!.label}</span><span className="text-[10px] text-graphite/50">{entry!.status === 'confirmed' ? '已确认' : entry!.status === 'direct_text' ? '你写过' : '根据搭配记录整理'}</span></div>{entry!.quote && <p className="mt-1 text-xs leading-5 text-graphite/70">“{entry!.quote}”</p>}{entry!.detail && <p className="mt-1 text-xs leading-5 text-graphite/60">{entry!.detail}</p>}</div>)}</div>{!evidence.length && <p className="mt-2 text-xs text-graphite/55">目前没有足够的记录支持这条结论。</p>}</details>;
-}
-
-function OutfitDetail({ outfit, run, onRefresh }: { outfit: OutfitCaseGraph; run: AnalysisRun; onRefresh: () => void }) {
-  const navigate = useNavigate();
-  const [focus, setFocus] = useState(outfit.decisionBrief?.focus || '');
-  const [problem, setProblem] = useState(outfit.decisionBrief?.problem || '');
-  const [outcome, setOutcome] = useState(outfit.decisionBrief?.outcome || '');
-  const [drafting, setDrafting] = useState(false);
-  const [message, setMessage] = useState('');
-  const meaningful = outfit.decisionMechanisms.filter((entry) => entry.role !== 'structural').slice(0, 3);
-  const focusHighlights = outfit.composition.designFocus.focusHighlights;
-
-  const saveBrief = (brief: OutfitDecisionBrief) => {
-    saveDecisionBrief(brief);
-    setMessage('搭配意图已保存，会参与下一次规则计算。');
-    onRefresh();
-  };
-
-  const draftWithKimi = async () => {
-    const request = buildKimiDecisionBriefRequest(run, outfit.matchId);
-    if (!request) { setMessage('这套搭配还缺少足够的已确认服装信息。'); return; }
-    setDrafting(true); setMessage('');
-    try {
-      const brief = authorizeKimiDecisionBrief(await requestKimiDecisionBrief(request));
-      setFocus(brief.focus); setProblem(brief.problem); setOutcome(brief.outcome);
-      saveBrief(brief);
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : 'AI 整理失败，请稍后重试');
-    } finally { setDrafting(false); }
-  };
-
-  const manualSave = () => saveBrief({ matchId: outfit.matchId, focus: focus.trim(), problem: problem.trim(), outcome: outcome.trim(), source: 'user', confirmation: 'manual', confirmed: true, updatedAt: new Date().toISOString() });
-
-  return <div className="hairline-t p-4 sm:p-5">
-    {outfit.story && <blockquote className="border-l-2 border-stamp/55 pl-4 text-sm leading-7 text-graphite/80">{outfit.story}</blockquote>}
-    <div className="mt-4 grid gap-3 md:grid-cols-2">
-      <div className="border border-graphite/15 bg-kraft/45 p-3"><p className="text-sm font-medium">设计焦点</p><p className="mt-1 text-sm leading-6 text-graphite/75">{focusHighlights.length ? focusHighlights.join('、') : '这套搭配暂时没有足够的已确认设计亮点。'}</p></div>
-      <div className="border border-stamp/25 bg-stamp/5 p-3"><p className="text-sm font-medium text-stamp">这套搭配的色卡</p><CompactPalette outfit={outfit} /></div>
-    </div>
-    <div className="mt-4">
-      <p className="text-sm font-medium">关键处理</p>
-      {meaningful.length ? <div className="mt-2 grid gap-2 md:grid-cols-3">{meaningful.map((decision) => <div key={decision.id} className={`border p-3 ${decision.role === 'dominant' ? 'border-stamp/40 bg-stamp/5' : 'border-graphite/15 bg-white/55'}`}><p className="text-xs text-stamp">{OPERATION_LABELS[decision.operation] || '其他调整'}</p><p className="mt-2 text-sm leading-6">{humanizeDisplayText(decision.action)}</p><p className="mt-2 text-xs leading-5 text-graphite/65">结果：{humanizeDisplayText(decision.effect)}</p></div>)}</div> : <p className="mt-2 border border-graphite/20 p-3 text-sm leading-6 text-graphite/65">当前还不能从现有服装信息确认具体处理。原始搭配说明仍被保留。</p>}
-    </div>
-
-    <div className="mt-5 border border-graphite/20 bg-tag/75 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="text-sm font-medium">这套搭配的意图</h4><p className="mt-1 text-xs leading-5 text-graphite/60">AI 只读取这套搭配的说明、已确认的服装信息和已有搭配方式。你可以直接修改。</p></div><button type="button" disabled={drafting} onClick={() => void draftWithKimi()} className="inline-flex min-h-10 items-center gap-2 border border-graphite/25 bg-white px-3 text-sm disabled:opacity-45">{drafting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}AI 起草</button></div>
-      <div className="mt-3 grid gap-2 md:grid-cols-3">{[['想突出什么', focus, setFocus], ['想处理什么', problem, setProblem], ['最后效果', outcome, setOutcome]].map(([label, value, setter]) => <label key={label as string} className="text-xs text-graphite/60">{label as string}<textarea value={value as string} onChange={(event) => (setter as (value: string) => void)(event.target.value)} rows={3} className="mt-1 block w-full resize-y border border-graphite/20 bg-white p-2 text-sm leading-5 text-ink outline-none focus:border-stamp" /></label>)}</div>
-      {message && <p className="mt-2 text-xs leading-5 text-stamp">{message}</p>}
-      <button type="button" onClick={manualSave} className="mt-3 min-h-10 bg-ink px-4 text-sm text-white">保存我的修改</button>
-    </div>
-
-    <div className="mt-4 flex flex-wrap gap-2">{outfit.primaryItems.map((item) => <button type="button" key={`${item.slot}:${item.itemId}`} onClick={() => navigate(`/item/${item.itemId}`)} className="border border-graphite/20 bg-white/60 px-2.5 py-1.5 text-xs hover:border-stamp hover:text-stamp">{item.itemName}</button>)}</div>
-    <EvidenceDrawer run={run} ids={[...outfit.relations.flatMap((entry) => entry.evidenceIds), ...meaningful.flatMap((entry) => entry.evidenceIds)]} />
-  </div>;
-}
-
-function SubstitutionDetail({ contract, run }: { contract: SubstitutionContract; run: AnalysisRun }) {
-  const navigate = useNavigate();
-  return <div className="hairline-t p-4 sm:p-5">
-    <p className="text-sm leading-6"><strong>已记录：</strong>{contract.contextMatchIds.length} 套搭配，{contract.contextAnchorIds.length} 件核心外衣。</p>
-    <div className="mt-4 grid gap-4 md:grid-cols-3"><div><p className="text-sm font-medium">必须保持</p><p className="mt-1 text-sm leading-6 text-graphite/70">{humanizeDisplayText(contract.invariants.join('；') || '暂时没有足够信息确认')}</p></div><div><p className="text-sm font-medium">可以变化</p><p className="mt-1 text-sm leading-6 text-graphite/70">{humanizeDisplayText(contract.allowedChanges.join('；') || '暂时没有明显差异')}</p></div><div><p className="text-sm font-medium">适用边界</p><p className="mt-1 text-sm leading-6 text-graphite/70">{humanizeDisplayText(contract.boundary)}</p></div></div>
-    {contract.effectChanges.length > 0 && <p className="mt-4 border-l-2 border-stamp/40 pl-3 text-sm leading-6 text-graphite/75">替换后：{humanizeDisplayText(contract.effectChanges.join('；'))}</p>}
-    <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => navigate(`/item/${contract.fromItemId}`)} className="border border-graphite/20 px-3 py-2 text-xs">查看 {contract.fromItemName}</button><button type="button" onClick={() => navigate(`/item/${contract.toItemId}`)} className="border border-graphite/20 px-3 py-2 text-xs">查看 {contract.toItemName}</button></div>
-    <EvidenceDrawer run={run} ids={contract.evidenceIds} />
-  </div>;
-}
-
-function WearFeedbackPanel({ records, run, onSaved }: { records: QuickWearRecord[]; run: AnalysisRun; onSaved: () => void }) {
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const pending = records.filter((entry) => entry.state === 'selected').slice(0, 5);
-  const update = (record: QuickWearRecord, state: QuickWearRecord['state']) => {
-    const reason = reasons[record.id]?.trim();
-    if (state === 'unsatisfied' && !reason) return;
-    saveQuickWearRecord({ ...record, state, reason, selectedAt: new Date().toISOString() });
-    onSaved();
-  };
-
-  return <section>
-    <h2 className="font-story text-2xl font-semibold">上次选的搭配，后来穿了吗</h2>
-    <p className="mt-1 text-sm leading-6 text-graphite/65">真实穿着结果会成为这套搭配的参考。负面反馈先只影响这套具体搭配。</p>
-    <div className="mt-3 space-y-3">
-      {pending.map((record) => {
-        const outfit = run.outfitCases.find((entry) => entry.matchId === record.matchId);
-        return <article key={record.id} className="border border-graphite/20 bg-tag/65 p-4">
-          <p className="text-sm font-medium">{outfit?.name || '已选择的搭配'}</p>
-          <p className="mt-1 text-xs text-graphite/55">选择于 {new Date(record.selectedAt).toLocaleString('zh-CN')}</p>
-          <input value={reasons[record.id] || ''} onChange={(event) => setReasons((current) => ({ ...current, [record.id]: event.target.value }))} placeholder="不满意时，请写下具体原因" className="mt-3 min-h-10 w-full border border-graphite/20 bg-white px-3 text-sm outline-none focus:border-stamp" />
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            <button type="button" onClick={() => update(record, 'satisfied')} className="min-h-10 bg-ink px-2 text-xs text-white">穿了，很合适</button>
-            <button type="button" onClick={() => update(record, 'unsatisfied')} disabled={!reasons[record.id]?.trim()} className="min-h-10 border border-stamp px-2 text-xs text-stamp disabled:opacity-40">穿了，不合适</button>
-            <button type="button" onClick={() => update(record, 'not_worn')} className="min-h-10 border border-graphite/25 px-2 text-xs">最后没穿</button>
-          </div>
-        </article>;
-      })}
-      {!pending.length && <p className="border border-graphite/20 p-5 text-sm text-graphite/65">最近没有等待确认的穿着记录。</p>}
-    </div>
-  </section>;
-}
-
-function StyleJournalView({ journal, run, onOpenCase }: { journal: StyleJournal; run: AnalysisRun; onOpenCase: (matchId: string) => void }) {
-  const [expanded, setExpanded] = useState('');
-  const [feedback, setFeedback] = useState<Record<string, 'accurate' | 'not_quite'>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
-
-  const submitFeedback = (chapter: StyleJournalChapter, value: 'accurate' | 'not_quite') => {
-    const note = notes[chapter.id] || '';
-    saveJournalFeedback(chapter.id, value, note);
-    setFeedback((current) => ({ ...current, [chapter.id]: value }));
-    void persistStyleJournalFeedback(journal, chapter.id, value, note).catch(() => {
-      // The local acknowledgement remains available when the optional cloud projection is unavailable.
-    });
-  };
-
-  return <div className="mt-5 space-y-5">
-    <section className="border border-stamp/30 bg-stamp/5 p-5 sm:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="font-tag text-[10px] uppercase tracking-[0.22em] text-stamp">A personal style journal</p><h2 className="mt-2 font-story text-3xl font-semibold leading-tight">你是怎样选择衣服的</h2><p className="mt-3 max-w-3xl text-base leading-8 text-graphite/80">{journal.portrait}</p></div><span className="shrink-0 border border-stamp/35 bg-white/65 px-3 py-2 text-xs text-stamp">{STAGE_LABELS[journal.stage]}</span></div>
-      <p className="mt-5 text-xs leading-5 text-graphite/55">这份风格志只使用你确认过的衣物、搭配和文字证据。它会随着新的选择和反馈继续变化。</p>
-    </section>
-
-    <div className="grid gap-4 lg:grid-cols-2">
-      {journal.chapters.map((chapter) => {
-        const isExpanded = expanded === chapter.id;
-        const cases = chapter.caseIds.map((id) => run.outfitCases.find((entry) => entry.matchId === id)).filter(Boolean).slice(0, 3) as OutfitCaseGraph[];
-        return <article key={chapter.id} className={`border bg-tag/65 ${isExpanded ? 'border-stamp' : 'border-graphite/20'}`}>
-          <button type="button" onClick={() => setExpanded((value) => value === chapter.id ? '' : chapter.id)} className="flex w-full items-start gap-4 p-4 text-left sm:p-5"><span aria-hidden="true" className="w-8 shrink-0 italic leading-none text-graphite/30" style={{ fontFamily: 'var(--font-display)', fontSize: '1.8rem' }}>{String(journal.chapters.indexOf(chapter) + 1).padStart(2, '0')}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="border border-graphite/20 bg-white/60 px-2 py-0.5 text-[10px] text-graphite/65">{MATURITY_LABELS[chapter.maturity]}</span>{chapter.caseIds.length > 0 && <span className="text-[10px] text-graphite/50">{chapter.caseIds.length} 套案例</span>}</div><h3 className="mt-2 font-story text-xl font-semibold">{chapter.title}</h3><p className="mt-2 text-sm leading-7 text-graphite/80">{chapter.summary}</p></div>{isExpanded ? <ChevronDown className="mt-1 h-4 w-4 shrink-0" /> : <ChevronRight className="mt-1 h-4 w-4 shrink-0" />}</button>
-          {isExpanded && <div className="hairline-t p-4 sm:p-5"><div className="flex flex-wrap gap-2">{chapter.itemIds.slice(0, 8).map((itemId) => <span key={itemId} className="border border-graphite/20 bg-white/60 px-2.5 py-1.5 text-xs">{itemId}</span>)}</div>{cases.length > 0 && <div className="mt-4"><p className="text-xs text-graphite/55">代表搭配</p><div className="mt-2 flex flex-wrap gap-2">{cases.map((outfit) => <button type="button" key={outfit.matchId} onClick={() => onOpenCase(outfit.matchId)} className="border border-graphite/20 bg-white px-3 py-2 text-xs hover:border-stamp hover:text-stamp">{outfit.name || '查看搭配'}</button>)}</div></div>}{chapter.sourceIds.length > 0 && <EvidenceDrawer run={run} ids={chapter.sourceIds} />}<div className="mt-5 border-t border-graphite/15 pt-4"><div className="flex flex-wrap items-center gap-2"><span className="text-xs text-graphite/60">这段理解准确吗？</span><button type="button" onClick={() => submitFeedback(chapter, 'accurate')} className={`min-h-9 border px-3 text-xs ${feedback[chapter.id] === 'accurate' ? 'border-ink bg-ink text-white' : 'border-graphite/25 bg-white'}`}>很准确</button><button type="button" onClick={() => submitFeedback(chapter, 'not_quite')} className={`min-h-9 border px-3 text-xs ${feedback[chapter.id] === 'not_quite' ? 'border-stamp bg-stamp text-white' : 'border-graphite/25 bg-white'}`}>不完全是</button></div>{feedback[chapter.id] === 'not_quite' && <textarea value={notes[chapter.id] || ''} onChange={(event) => setNotes((current) => ({ ...current, [chapter.id]: event.target.value }))} onBlur={() => saveJournalFeedback(chapter.id, 'not_quite', notes[chapter.id] || '')} rows={2} className="mt-3 w-full border border-graphite/20 bg-white p-2 text-sm outline-none focus:border-stamp" placeholder="可以补充一句：哪里不完全是？" />}</div></div>}
-        </article>;
-      })}
-    </div>
-  </div>;
-}
+} from "../lib/aestheticAnalysisV3";
+import { liveAestheticSnapshot } from "../lib/aestheticProduct";
+import {
+  listVisionAnalyses,
+  type VisionAnalysis,
+} from "../lib/aestheticVision";
+import { loadSyncedAestheticRun } from "../lib/aestheticRunSync";
+import { StyleJournalExperience } from "./StyleJournalExperience";
+import { currentJournalAnalyses } from "../lib/styleJournalView";
+import { useAuth } from "./Auth";
 
 export function AestheticProfilePage() {
-  const navigate = useNavigate();
-  const { items, loading: itemsLoading } = useWardrobe();
-  const { matches, loading: matchesLoading } = useBestMatches();
+  const { user } = useAuth();
+  const { items, loading: itemsLoading, error: itemsError } = useWardrobe();
+  const {
+    matches,
+    loading: matchesLoading,
+    error: matchesError,
+  } = useBestMatches();
   const [analyses, setAnalyses] = useState<VisionAnalysis[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<View>('journal');
-  const [expanded, setExpanded] = useState('');
-  const [refresh, setRefresh] = useState(0);
-  const [notice, setNotice] = useState('');
   const [syncedRun, setSyncedRun] = useState<AnalysisRun | null>(null);
-  const [quickRecords, setQuickRecords] = useState<QuickWearRecord[]>(() => listQuickWearRecords());
-
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState("");
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    listVisionAnalyses().then((next) => { if (alive) setAnalyses(next); }).catch(() => { if (alive) setNotice('服装信息暂时没能读取；搭配结构仍然可以查看。'); }).finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    loadSyncedAestheticRun().then((next) => { if (alive && next) setSyncedRun(next); }).catch(() => {
-      // A synced run is an enhancement; source rows and deterministic rules remain usable.
-    });
-    return () => { alive = false; };
-  }, []);
-
-  const snapshot = useMemo(() => liveAestheticSnapshot(items, matches, analyses), [items, matches, analyses]);
-  const generatedRun = useMemo(() => buildLiveAestheticRun(snapshot), [snapshot, refresh]);
-  const run = useMemo(() => {
-    // The synced bundle is the audited local run Victor asked to publish. It
-    // may intentionally cover a curated subset of the larger online wardrobe.
-    return syncedRun || generatedRun;
-  }, [generatedRun, syncedRun]);
-  const journal = useMemo(() => buildStyleJournal(run), [run]);
-  useEffect(() => {
-    void persistStyleJournal(journal).catch(() => {
-      // Reading and local feedback remain available if the productization migration is not deployed yet.
-    });
-  }, [journal]);
-  const confirmedCount = analyses.filter((entry) => entry.status === 'confirmed').length;
-  const proposed = analyses.filter((entry) => entry.status === 'proposed');
-  const itemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
-
-  const saveReview = (questionId: string, choice: string) => {
-    const current = readFeedback();
-    const next = [...current.filter((entry) => !(entry.targetType === 'review' && entry.targetId === questionId)), { id: `feedback:review:${questionId}`, targetType: 'review' as const, targetId: questionId, choice, updatedAt: new Date().toISOString() }];
-    window.localStorage.setItem(FEEDBACK_KEY, JSON.stringify(next));
-    setNotice('已经记下。下一次计算会读取这条人工判断。');
-    setRefresh((value) => value + 1);
-  };
-
-  if (loading || itemsLoading || matchesLoading) return <div className="grid min-h-[55vh] place-items-center"><div className="text-center text-sm text-graphite/60"><Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />正在把衣柜记录整理成穿衣规律…</div></div>;
-
-  return <section className="mx-auto max-w-6xl pb-14">
-    <button type="button" onClick={() => { sfx.filterClick(); navigate('/'); }} className="back-link mb-4"><ArrowLeft className="h-4 w-4" />返回衣柜</button>
-    <header className="grid gap-5 hairline-b pb-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-end">
-      <div><p className="font-tag text-[10px] uppercase tracking-[0.24em] text-stamp">Style Journal</p><h1 className="mt-2 font-story text-4xl font-semibold leading-tight">我的风格志</h1><p className="mt-3 max-w-2xl text-sm leading-7 text-graphite/75">从你确认过的单品信息、Best Match、变体和文字说明里整理。先读懂自己，再决定下一套怎么穿。</p></div>
-      <dl className="grid grid-cols-3 border border-graphite/20 bg-tag/65 text-center"><div className="p-3 sm:p-4"><dd className="font-display italic text-3xl leading-none text-ink" style={{ fontFamily: 'var(--font-display)' }}>{confirmedCount}</dd><dt className="mt-1.5 font-tag text-[9px] uppercase tracking-[0.18em] text-graphite/55">已确认单品</dt></div><div className="border-x border-graphite/15 p-3 sm:p-4"><dd className="font-display italic text-3xl leading-none text-ink" style={{ fontFamily: 'var(--font-display)' }}>{run.outfitCases.length}</dd><dt className="mt-1.5 font-tag text-[9px] uppercase tracking-[0.18em] text-graphite/55">Best Match</dt></div><div className="p-3 sm:p-4"><dd className="font-display italic text-3xl leading-none text-ink" style={{ fontFamily: 'var(--font-display)' }}>{run.principles.length}</dd><dt className="mt-1.5 font-tag text-[9px] uppercase tracking-[0.18em] text-graphite/55">可追溯规律</dt></div></dl>
-    </header>
-
-    <section className="mt-5 flex flex-wrap items-center justify-between gap-4 border border-stamp/30 bg-stamp/5 p-4 sm:p-5">
-      <div>
-        <p className="font-tag text-[10px] uppercase tracking-[0.2em] text-stamp">Start here</p>
-        <h2 className="mt-1 font-story text-xl font-semibold">从单品开始，把解析结果接进你的穿衣规律</h2>
-        <p className="mt-1 max-w-2xl text-sm leading-6 text-graphite/70">打开一件衣服，在详情页查看设计档案。AI 会在后台整理，确认后的廓形、材质、颜色和设计亮点会进入这里；“搭一套”也从同一个位置进入。</p>
+    setNotice("");
+    Promise.allSettled([listVisionAnalyses(), loadSyncedAestheticRun()]).then(
+      ([vision, saved]) => {
+        if (!alive) return;
+        setAnalyses(vision.status === "fulfilled" ? vision.value : []);
+        setSyncedRun(saved.status === "fulfilled" ? saved.value : null);
+        if (vision.status === "rejected")
+          setNotice("颜色信息暂时没能读取，已有搭配仍可查看。");
+        else if (saved.status === "rejected")
+          setNotice("暂时无法读取上次整理的风格，先展示当前衣物与搭配。");
+        setLoading(false);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [retry, user?.uid]);
+  // Never inherit another account's local audit-workbench state.
+  const currentRun = useMemo(
+    () =>
+      buildAestheticAnalysisV4(
+        liveAestheticSnapshot(
+          items,
+          matches,
+          currentJournalAnalyses(analyses, items),
+        ),
+      ),
+    [items, matches, analyses],
+  );
+  const displayRun = useMemo(
+    () =>
+      syncedRun
+        ? {
+            ...syncedRun,
+            atoms: currentRun.atoms,
+            colors: currentRun.colors,
+            substitutions: currentRun.substitutions,
+            outfitCases: currentRun.outfitCases,
+          }
+        : currentRun,
+    [syncedRun, currentRun],
+  );
+  if (itemsLoading || matchesLoading || loading)
+    return (
+      <div className="grid min-h-[55vh] place-items-center" role="status">
+        <p className="flex items-center gap-3 font-story text-graphite">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          正在翻阅你的衣柜…
+        </p>
       </div>
-      <div className="flex shrink-0 flex-wrap gap-2">
-        <button type="button" onClick={() => navigate('/')} className="min-h-10 border border-graphite/25 bg-white px-3 text-sm text-ink hover:border-stamp">选择单品</button>
-        <button type="button" onClick={() => navigate('/best-match/new')} className="min-h-10 bg-ink px-3 text-sm text-white">建立搭配</button>
+    );
+  if (itemsError || matchesError)
+    return (
+      <div className="py-20 text-center">
+        <h1 className="font-story text-2xl">衣柜记录暂时没能打开</h1>
+        <p className="my-4 text-sm text-graphite">
+          请重新加载，再来看看你的色卡与搭配。
+        </p>
+        <button className="back-link" onClick={() => window.location.reload()}>
+          <RefreshCw size={16} />
+          重新加载
+        </button>
       </div>
-    </section>
-
-    <nav className="sticky top-0 z-20 mt-4 border-y border-graphite/15 bg-kraft/95 py-2 backdrop-blur" aria-label="审美档案导航"><div className="hide-scrollbar flex gap-1 overflow-x-auto">{(Object.keys(VIEW_LABELS) as View[]).map((key) => <button type="button" key={key} onClick={() => { setView(key); setExpanded(''); }} className={`min-h-10 shrink-0 border px-3 text-sm ${view === key ? 'border-ink bg-ink text-white' : 'border-transparent text-graphite hover:border-graphite/25 hover:text-ink'}`}>{VIEW_LABELS[key]}</button>)}</div></nav>
-    {notice && <p className="mt-4 border-l-2 border-stamp pl-3 text-sm leading-6 text-stamp">{notice}</p>}
-
-    {view === 'journal' && <StyleJournalView journal={journal} run={run} onOpenCase={(matchId) => { setView('cases'); setExpanded(matchId); }} />}
-
-    {view === 'principles' && <div className="mt-5 space-y-6">
-      <div className="grid gap-3 lg:grid-cols-2">{run.principles.map((principle, principleIndex) => { const palette = principlePalette(run, principle); return <article key={principle.id} className={`overflow-hidden border bg-tag/65 ${expanded === principle.id ? 'border-stamp lg:col-span-2' : 'border-graphite/20'}`}>
-        <div className="flex h-[4px]" aria-hidden="true">{palette.length ? palette.map((hex, colorIndex) => <span key={colorIndex} className="flex-1" style={{ background: hex }} />) : <span className="flex-1 bg-graphite/15" />}</div>
-        <button type="button" onClick={() => setExpanded((value) => value === principle.id ? '' : principle.id)} className="flex w-full items-start gap-4 p-4 text-left sm:p-5"><span aria-hidden="true" className="w-9 shrink-0 italic leading-none text-graphite/30" style={{ fontFamily: 'var(--font-display)', fontSize: '2rem' }}>{String(principleIndex + 1).padStart(2, '0')}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="border border-stamp/25 bg-stamp/5 px-2 py-0.5 text-[10px] text-stamp">{PRINCIPLE_LABELS[principle.kind]}</span><span className="font-tag text-[10px] tracking-[0.04em] text-graphite/60">{principle.supportMatchIds.length} 套案例 · 确认 {percent(principle.confirmedCoverage)}</span></div><h2 className="mt-2.5 font-story text-xl font-semibold">{humanizeDisplayText(principle.title)}</h2><p className="mt-2 text-sm leading-7 text-graphite/80">{humanizeDisplayText(principle.statement)}</p></div>{expanded === principle.id ? <ChevronDown className="mt-1 h-4 w-4 shrink-0" /> : <ChevronRight className="mt-1 h-4 w-4 shrink-0" />}</button>
-        {expanded === principle.id && <div className="grid gap-4 hairline-t p-4 md:grid-cols-3 sm:p-5"><div><p className="text-xs text-stamp">适用条件</p><p className="mt-1 text-sm leading-6">{humanizeDisplayText(principle.condition)}</p></div><div><p className="text-xs text-stamp">常用处理</p><p className="mt-1 text-sm leading-6">{humanizeDisplayText(principle.mechanism)}</p></div><div><p className="text-xs text-stamp">形成的效果</p><p className="mt-1 text-sm leading-6">{humanizeDisplayText(principle.effect)}</p></div><div className="md:col-span-3"><p className="text-xs text-graphite/55">对应搭配</p><div className="mt-2 flex flex-wrap gap-2">{principle.representativeMatchIds.map((id) => <button type="button" key={id} onClick={() => { setView('cases'); setExpanded(id); }} className="border border-graphite/20 bg-white px-3 py-2 text-xs hover:border-stamp hover:text-stamp">{run.outfitCases.find((entry) => entry.matchId === id)?.name || '查看搭配'}</button>)}</div><EvidenceDrawer run={run} ids={principle.evidenceIds} /></div></div>}
-      </article>; })}</div>
-      {!run.principles.length && <div className="border border-graphite/20 p-8 text-center"><h2 className="font-story text-2xl font-semibold">还没有形成稳定规律</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-graphite/65">先确认更多单品信息并保存 Best Match。数据不足时，这里不会用词频补结论。</p></div>}
-
-      <div className="grid gap-4 xl:grid-cols-2"><section className="border border-graphite/20 bg-tag/60 p-4 sm:p-5"><div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-stamp" /><h2 className="font-story text-xl font-semibold">设计亮点怎么分配</h2></div><div className="mt-3 space-y-2">{run.designHighlights.slice(0, 5).map((insight) => <button type="button" key={insight.id} onClick={() => { const id = insight.matchIds[0]; if (id) { setView('cases'); setExpanded(id); } }} className="block w-full border border-graphite/15 bg-white/60 p-3 text-left"><p className="text-sm font-medium">{humanizeDisplayText(insight.title)}</p><p className="mt-1 text-sm leading-6 text-graphite/70">{humanizeDisplayText(insight.statement)}</p></button>)}</div></section><section className="border border-stamp/25 bg-stamp/5 p-4 sm:p-5"><div className="flex items-center gap-2 text-stamp"><Palette className="h-4 w-4" /><h2 className="font-story text-xl font-semibold">你已经用过的配色</h2></div><div className="mt-3 space-y-2">{run.colorInsights.slice(0, 5).map((insight) => <button type="button" key={insight.id} onClick={() => { const id = insight.matchIds[0]; if (id) { setView('cases'); setExpanded(id); } }} className="block w-full border border-stamp/15 bg-white/60 p-3 text-left"><p className="text-sm font-medium">{humanizeDisplayText(insight.title)}</p><p className="mt-1 text-sm leading-6 text-graphite/70">{humanizeDisplayText(insight.statement)}</p><div className="mt-3 flex flex-wrap items-end gap-3">{insight.evidenceIds.map((id) => run.evidence.find((entry) => entry.id === id)).filter((entry) => entry?.kind === 'color').slice(0, 4).map((entry) => { const hex = (entry!.label.match(/#[0-9a-fA-F]{6}/)?.[0] || '#DDD8CC').toUpperCase(); const num = parseInt(hex.slice(1), 16); return <ColorSwatchCard key={entry!.id} size="sm" color={{ r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 }} code={hex} role="色票" />; })}</div></button>)}</div></section></div>
-    </div>}
-
-    {view === 'cases' && <div className="mt-5 grid gap-3 md:grid-cols-2">{run.outfitCases.map((outfit) => <article key={outfit.matchId} className={`border bg-tag/65 ${expanded === outfit.matchId ? 'border-stamp md:col-span-2' : 'border-graphite/20'}`}><button type="button" onClick={() => setExpanded((value) => value === outfit.matchId ? '' : outfit.matchId)} className="flex w-full items-center justify-between gap-3 p-3 text-left"><div className="min-w-0 flex-1"><div className="mb-2 flex gap-1.5">{outfit.primaryItems.slice(0, 4).map((pi) => { const piItem = itemMap.get(pi.itemId); return piItem?.imageUrl ? <img key={pi.itemId} src={resolveMediaUrl(piItem.imageUrl)} alt="" loading="lazy" className="h-11 w-9 border border-graphite/15 object-cover" /> : null; })}</div><h2 className="truncate font-story text-lg font-semibold">{outfit.name}</h2><p className="mt-1 truncate text-xs text-graphite/55">核心外衣 · {outfit.anchorItemName} · 确认 {percent(outfit.evidenceCoverage)}</p></div>{expanded === outfit.matchId ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{expanded === outfit.matchId && <OutfitDetail outfit={outfit} run={run} onRefresh={() => setRefresh((value) => value + 1)} />}</article>)}</div>}
-
-    {view === 'substitutions' && <div className="mt-5 grid gap-3 md:grid-cols-2">{run.substitutions.map((contract) => <article key={contract.id} className={`border bg-tag/65 ${expanded === contract.id ? 'border-stamp md:col-span-2' : 'border-graphite/20'}`}><button type="button" onClick={() => setExpanded((value) => value === contract.id ? '' : contract.id)} className="flex w-full items-center justify-between gap-3 p-3 text-left"><div className="min-w-0 flex-1"><div className="mb-2 flex items-center gap-1.5">{[contract.fromItemId, contract.toItemId].map((itemId) => { const relItem = itemMap.get(itemId); return relItem?.imageUrl ? <img key={itemId} src={resolveMediaUrl(relItem.imageUrl)} alt="" loading="lazy" className="h-10 w-8 border border-graphite/15 object-cover" /> : null; })}</div><h2 className="truncate text-sm font-medium">{contract.fromItemName} <ArrowRight className="mx-1 inline h-3.5 w-3.5" /> {contract.toItemName}</h2><p className="mt-1 text-xs text-graphite/55">{contract.slot} · {contract.contextMatchIds.length} 套搭配{contract.repeated ? ' · 重复出现' : ''}</p></div>{expanded === contract.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{expanded === contract.id && <SubstitutionDetail contract={contract} run={run} />}</article>)}</div>}
-
-    {view === 'calibration' && <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
-      <WearFeedbackPanel records={quickRecords} run={run} onSaved={() => { setQuickRecords(listQuickWearRecords()); setNotice('实穿结果已经记下，并进入下一次规则计算。'); setRefresh((value) => value + 1); }} />
-      <section><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-story text-2xl font-semibold">需要你确认的内容</h2><p className="mt-1 text-sm leading-6 text-graphite/65">AI 只整理一版待确认内容。进入单品后可以修改颜色、材质、廓形、风格和设计亮点。</p></div><span className="text-sm text-stamp">{proposed.length} 件待确认</span></div><div className="mt-3 grid gap-2 sm:grid-cols-2">{proposed.map((analysis) => { const item = itemMap.get(analysis.itemId); return <button type="button" key={analysis.id} onClick={() => navigate(`/item/${analysis.itemId}`)} className="grid grid-cols-[58px_minmax(0,1fr)_auto] items-center gap-3 border border-graphite/20 bg-tag/65 p-2 text-left">{item?.imageUrl ? <img src={resolveMediaUrl(item.imageUrl)} alt="" className="h-16 w-14 object-cover" /> : <span className="grid h-16 w-14 place-items-center bg-kraft text-xs text-graphite/40">无图</span>}<span className="min-w-0"><span className="block truncate text-sm font-medium">{item?.name || analysis.itemId}</span><span className="mt-1 block text-xs text-graphite/55">{analysis.payload.designHighlights.length} 个设计亮点 · {analysis.payload.dominantColors.length} 个颜色</span></span><ArrowRight className="h-4 w-4 text-stamp" /></button>; })}</div>{!proposed.length && <p className="mt-3 border border-graphite/20 p-5 text-sm text-graphite/65">当前没有待确认内容。你仍可在任意单品详情查看或修改。</p>}</section>
-      <section><h2 className="font-story text-2xl font-semibold">帮系统弄清楚</h2><p className="mt-1 text-sm leading-6 text-graphite/65">每次只问会改变规则边界的问题。你的选择会作为人工判断保留。</p><div className="mt-3 space-y-3">{run.reviewQuestions.slice(0, 5).map((question) => <article key={question.id} className="border border-graphite/20 bg-tag/65 p-4"><p className="text-sm font-medium leading-6">{question.question}</p><p className="mt-1 text-xs leading-5 text-graphite/60">{question.context}</p><div className="mt-3 grid gap-2">{question.options.map((option) => <button type="button" key={option} onClick={() => saveReview(question.id, option)} className="min-h-10 border border-graphite/20 bg-white px-3 text-left text-xs hover:border-stamp hover:text-stamp"><Check className="mr-1 inline h-3 w-3" />{option}</button>)}</div></article>)}</div></section>
-      <section className="hairline-t pt-5 lg:col-span-2"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-story text-xl font-semibold">AI 与分析方法</h2><p className="mt-1 text-sm leading-6 text-graphite/65">图片和搭配说明由 AI 协助整理。最终规律结合你确认的服装信息、Best Match、变体和人工判断得出。</p></div><button type="button" onClick={() => setRefresh((value) => value + 1)} className="inline-flex min-h-10 items-center gap-2 border border-graphite/25 bg-white px-3 text-sm"><RefreshCw className="h-4 w-4" />更新分析</button></div><div className="mt-4 grid gap-2 sm:grid-cols-3"><div className="border border-graphite/15 bg-tag/55 p-3"><ScanText className="h-4 w-4 text-stamp" /><p className="mt-2 text-sm font-medium">AI 整理</p><p className="mt-1 text-xs leading-5 text-graphite/60">整理服装信息或搭配意图，保留原始来源。</p></div><div className="border border-graphite/15 bg-tag/55 p-3"><Check className="h-4 w-4 text-stamp" /><p className="mt-2 text-sm font-medium">你来确认</p><p className="mt-1 text-xs leading-5 text-graphite/60">你修改后的内容会作为明确记录保存，AI 不会反向覆盖。</p></div><div className="border border-graphite/15 bg-tag/55 p-3"><Sparkles className="h-4 w-4 text-stamp" /><p className="mt-2 text-sm font-medium">整理搭配规律</p><p className="mt-1 text-xs leading-5 text-graphite/60">结合已确认信息、Best Match 和变体，整理出可追溯的搭配规律。</p></div></div></section>
-    </div>}
-  </section>;
+    );
+  return (
+    <>
+      {notice && (
+        <div
+          role="status"
+          className="mb-4 flex flex-wrap items-center gap-3 text-sm text-graphite"
+        >
+          {notice}
+          <button
+            onClick={() => setRetry((value) => value + 1)}
+            className="underline underline-offset-4"
+          >
+            重新读取
+          </button>
+        </div>
+      )}
+      <StyleJournalExperience
+        items={items}
+        matches={matches}
+        run={displayRun}
+        colors={currentRun.colors}
+      />
+    </>
+  );
 }

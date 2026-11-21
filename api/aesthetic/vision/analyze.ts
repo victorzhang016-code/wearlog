@@ -1,12 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { aiProvider, aiFetch } from '../../_lib/aiProvider.js';
 import { blockDevProdServices } from '../../_lib/devGuard.js';
 import { supabaseRest, verifySupabaseToken } from '../../_lib/supabase.js';
 
 const MAX_BODY_CHARS = 4_000_000;
-const KIMI_API_ENDPOINT = process.env.KIMI_API_ENDPOINT
-  || 'https://api.kimi.com/coding/v1/chat/completions';
-const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-for-coding';
-
 function bodyOf(req: VercelRequest): Record<string, any> {
   if (!req.body) return {};
   if (typeof req.body === 'string') {
@@ -88,7 +85,7 @@ async function readJson(response: Response): Promise<any> {
   try { return JSON.parse(text); } catch { return { error: text || 'empty upstream response' }; }
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handleRequest(req: VercelRequest, res: VercelResponse) {
   if (blockDevProdServices(res)) return;
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
@@ -123,8 +120,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(503).json({ error: '分析限流服务暂时不可用' });
   }
 
-  const apiKey = process.env.KIMI_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'KIMI_API_KEY is not configured' });
+  let config: ReturnType<typeof aiProvider>;
+  try { config = aiProvider(process.env, 'vision'); } catch { return res.status(503).json({ error: '图片服务配置不可用' }); }
+  if (!config.key) return res.status(503).json({ error: '图片服务尚未配置' });
 
   const prompt = `你是衣LOG的服装视觉分析器。只根据图片中可见的服装事实进行判断，不猜测品牌、故事、身份和图片外的信息。只返回 JSON，不要 Markdown，不要解释。JSON 必须包含：
 silhouetteTags、materialTags、patternTags、styleTags、designHighlights：数组，每项为 {"value": string, "confidence": 0到1, "evidence": string}；
@@ -133,17 +131,12 @@ visualWeight、formality：对象 {"value": string, "confidence": 0到1, "eviden
 dominantColors：数组，每项为 {"rgb": [0到255整数, 0到255整数, 0到255整数], "role": "dominant|secondary|accent", "areaRatio": 0到1, "region": "garment|trim|pattern|unknown", "confidence": 0到1}。
 颜色 RGB 必须表示服装本身的近似像素颜色。背景、皮肤和环境不计入服装主色。最多返回 6 个颜色。${typeof body.itemName === 'string' ? `单品名称仅供定位：${body.itemName}` : ''}`;
 
-  const upstream = await fetch(KIMI_API_ENDPOINT, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: KIMI_MODEL,
+  const upstream = await aiFetch(config, {
       max_tokens: Number(process.env.KIMI_IMAGE_MAX_TOKENS || 4096),
       messages: [
         { role: 'system', content: '只输出符合要求的 JSON。' },
         { role: 'user', content: [{ type: 'image_url', image_url: { url: image } }, { type: 'text', text: prompt }] },
       ],
-    }),
   });
   const response = await readJson(upstream);
   if (!upstream.ok) return res.status(upstream.status).json(response);
@@ -153,5 +146,12 @@ dominantColors：数组，每项为 {"rgb": [0到255整数, 0到255整数, 0到2
     ?? response?.output_text;
   const raw = jsonFromContent(content);
   if (!raw) return res.status(502).json({ error: '视觉模型未返回可解析的 JSON', raw: String(content ?? '') });
-  return res.status(200).json({ modelVersion: KIMI_MODEL, payload: normalizePayload(raw) });
+  return res.status(200).json({ modelVersion: config.model, payload: normalizePayload(raw) });
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  try { return await handleRequest(req, res); }
+  catch (error) {
+    return res.status(502).json({ error: error instanceof Error && error.name === 'TimeoutError' ? '分析时间较长，请稍后重试' : 'AI 服务连接失败，请稍后重试' });
+  }
 }

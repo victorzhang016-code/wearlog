@@ -268,8 +268,8 @@ function AppRoutes() {
             <span className="side-nav-tag__meta">最佳搭配</span>
           </NavLink>
           <NavLink to="/aesthetic" className="side-nav-tag">
-            <span className="side-nav-tag__label">我的穿衣规律</span>
-            <span className="side-nav-tag__meta">Style Rules</span>
+            <span className="side-nav-tag__label">我的风格志</span>
+            <span className="side-nav-tag__meta">Style Journal</span>
           </NavLink>
         </nav>
         <div className="mt-auto">

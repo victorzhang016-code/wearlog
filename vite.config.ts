@@ -1,3 +1,5 @@
+import { analyzeStyleEvidence } from './api/_lib/styleInsightService';
+import { aiProvider } from './api/_lib/aiProvider';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
@@ -178,9 +180,10 @@ const createLocalVisionPlugin = (env: Record<string, string>): Plugin => ({
         sendJson(res, 405, {error: '仅支持 POST'});
         return;
       }
-      const apiKey = String(env.KIMI_API_KEY || '').trim();
+      const provider = aiProvider(env, 'vision');
+        const apiKey = provider.key;
       if (!apiKey) {
-        sendJson(res, 503, {error: '本地读图服务未配置 KIMI_API_KEY，请在 .env.local 设置'});
+        sendJson(res, 503, {error: '图片服务尚未配置密钥'});
         return;
       }
       try {
@@ -190,8 +193,8 @@ const createLocalVisionPlugin = (env: Record<string, string>): Plugin => ({
           sendJson(res, 400, {error: '请提供 data URL 或 http(s) 图片地址'});
           return;
         }
-        const endpoint = String(env.KIMI_API_ENDPOINT || 'https://api.kimi.com/coding/v1/chat/completions').trim();
-        const model = String(env.KIMI_MODEL || 'kimi-for-coding').trim();
+        const endpoint = provider.endpoint;
+        const model = provider.model;
         const refineMode = body.mode === 'refine';
         const refineField = asText(body.field) || 'materialTags';
         const refineCorrection = asText(body.correction);
@@ -214,7 +217,7 @@ const createLocalVisionPlugin = (env: Record<string, string>): Plugin => ({
           method: 'POST',
           headers: {'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`},
           body: JSON.stringify({
-            model,
+            ...provider.options, model,
             max_tokens: Number(env.KIMI_IMAGE_MAX_TOKENS || 4096),
             messages: [
               {role: 'system', content: '只输出符合要求的 JSON。'},
@@ -224,7 +227,7 @@ const createLocalVisionPlugin = (env: Record<string, string>): Plugin => ({
         });
         const raw = await response.text();
         if (response.status === 401 || response.status === 403) {
-          sendJson(res, 503, {error: 'KIMI_API_KEY 无效或已过期；当前已降级为本地 RGB 像素分析'});
+          sendJson(res, 503, {error: '图片服务认证失败，请检查密钥和模型权限'});
           return;
         }
         if (!response.ok) throw new Error(`读图服务返回 ${response.status}`);
@@ -375,6 +378,11 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
     const localRoot = path.resolve(process.cwd(), '.local-data', 'aesthetic');
     const middleware: Connect.NextHandleFunction = async (req, res, next) => {
       const route = req.url?.split('?')[0];
+      if (route === '/api/local/aesthetic/style-insights') {
+        if (req.method !== 'POST') return sendJson(res, 405, {error: '仅支持 POST'});
+        try { const body = await readJsonBody(req); return sendJson(res, 200, await analyzeStyleEvidence(body.evidence, env)); }
+        catch (error) { return sendJson(res, 502, {error: error instanceof Error ? error.message : '分析暂时不可用'}); }
+      }
       if (route === '/api/local/aesthetic/versions') {
         if (req.method !== 'POST') return sendJson(res, 405, {error: '仅支持 POST'});
         try {
@@ -413,13 +421,14 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
       }
       if (route === '/api/local/aesthetic/text-claims/capability') {
         if (req.method !== 'POST') return sendJson(res, 405, {error: 'Only POST is supported'});
-        const apiKey = String(env.KIMI_API_KEY || '').trim();
-        if (!apiKey) return sendJson(res, 503, {error: 'Kimi is not configured'});
+        const provider = aiProvider(env, 'text');
+        const apiKey = provider.key;
+        if (!apiKey) return sendJson(res, 503, {error: 'AI service is not configured'});
         try {
-          const endpoint = String(env.KIMI_API_ENDPOINT || 'https://api.kimi.com/coding/v1/chat/completions').trim();
-          const model = String(env.KIMI_MODEL || 'kimi-for-coding').trim();
+          const endpoint = provider.endpoint;
+          const model = provider.model;
           const probeText = '用白色球鞋提亮深色外套，降低整体正式度。';
-          const response = await fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`}, body: JSON.stringify({model, max_tokens: 1200, response_format: {type: 'json_object'}, messages: [{role: 'system', content: '只输出 JSON。'}, {role: 'user', content: `这是格式与提取测试。必须返回至少一条命题，quote 必须是“${probeText}”中的连续原文，type 必须为 color_operation 或 formality_operation。返回 {"claims":[{"sourceType":"best_match","sourceId":"probe","quote":"","type":"","subjectItemIds":[],"confidence":0.9}]}`}]})});
+          const response = await fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`}, body: JSON.stringify({...provider.options, model, max_tokens: 1200, response_format: {type: 'json_object'}, messages: [{role: 'system', content: '只输出 JSON。'}, {role: 'user', content: `这是格式与提取测试。必须返回至少一条命题，quote 必须是“${probeText}”中的连续原文，type 必须为 color_operation 或 formality_operation。返回 {"claims":[{"sourceType":"best_match","sourceId":"probe","quote":"","type":"","subjectItemIds":[],"confidence":0.9}]}`}]})});
           const raw = await response.text();
           const envelope = JSON.parse(raw) as Record<string, any>;
           const content = envelope.choices?.[0]?.message?.content || envelope.choices?.[0]?.text || envelope.output_text;
@@ -433,8 +442,9 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
       }
       if (route === '/api/local/aesthetic/decision-brief') {
         if (req.method !== 'POST') return sendJson(res, 405, {error: '仅支持 POST'});
-        const apiKey = String(env.KIMI_API_KEY || '').trim();
-        if (!apiKey) return sendJson(res, 503, {error: 'Kimi 未配置；你仍可手动填写三句搭配意图'});
+        const provider = aiProvider(env, 'text');
+        const apiKey = provider.key;
+        if (!apiKey) return sendJson(res, 503, {error: 'AI 未配置；你仍可手动填写三句搭配意图'});
         try {
           const body = await readJsonBody(req, 128 * 1024);
           const incoming = body.request && typeof body.request === 'object' ? body.request as Record<string, unknown> : {};
@@ -457,18 +467,18 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
               return {operation: asText(raw.operation).slice(0, 80), role: asText(raw.role).slice(0, 40), condition: asText(raw.condition).slice(0, 180), action: asText(raw.action).slice(0, 180), effect: asText(raw.effect).slice(0, 180)};
             }).filter((entry) => entry.operation && entry.action).slice(0, 3),
           };
-          const endpoint = String(env.KIMI_API_ENDPOINT || 'https://api.kimi.com/coding/v1/chat/completions').trim();
-          const model = String(env.KIMI_DECISION_MODEL || env.KIMI_MODEL || 'kimi-for-coding').trim();
+          const endpoint = provider.endpoint;
+          const model = provider.model;
           const promptVersion = asText(body.promptVersion) || 'wearlog-decision-brief-v1';
-          const prompt = `你是衣LOG的单套搭配意图起草助手。根据下方这一套搭配的已确认事实，起草三句短意图：focus（想突出什么）、problem（要处理什么问题）、outcome（最后效果怎样）。\n\n要求：\n- 只使用给出的原始搭配说明、已确认字段、已确认文字证据和已存在的本地机制；不补写不存在的身形、场景、品牌意图或穿着反馈。\n- 语言使用准确的穿搭表达，短、具体、可让用户修改；不要口号、拟人化或空泛形容词。\n- 每一项最多 60 个汉字；证据不足可留空字符串。\n- 这只是 Kimi 草案，用户确认前不进入正式意图证据。\n- 只返回 JSON：{"brief":{"focus":"","problem":"","outcome":""}}。\n\n当前搭配事实：${JSON.stringify(evidence)}`;
+          const prompt = `你是衣LOG的单套搭配意图起草助手。根据下方这一套搭配的已确认事实，起草三句短意图：focus（想突出什么）、problem（要处理什么问题）、outcome（最后效果怎样）。\n\n要求：\n- 只使用给出的原始搭配说明、已确认字段、已确认文字证据和已存在的本地机制；不补写不存在的身形、场景、品牌意图或穿着反馈。\n- 语言使用准确的穿搭表达，短、具体、可让用户修改；不要口号、拟人化或空泛形容词。\n- 每一项最多 60 个汉字；证据不足可留空字符串。\n- 这只是 AI 草案，用户确认前不进入正式意图证据。\n- 只返回 JSON：{"brief":{"focus":"","problem":"","outcome":""}}。\n\n当前搭配事实：${JSON.stringify(evidence)}`;
           const call = async (userPrompt: string) => {
             const response = await fetch(endpoint, {
               method: 'POST',
               headers: {'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`},
-              body: JSON.stringify({model, max_tokens: 700, response_format: {type: 'json_object'}, messages: [{role: 'system', content: '只输出合法 JSON，不要 Markdown。'}, {role: 'user', content: userPrompt}]}),
+              body: JSON.stringify({...provider.options, model, max_tokens: 700, response_format: {type: 'json_object'}, messages: [{role: 'system', content: '只输出合法 JSON，不要 Markdown。'}, {role: 'user', content: userPrompt}]}),
             });
             const raw = await response.text();
-            if (!response.ok) throw new Error(`Kimi 搭配意图服务返回 ${response.status}`);
+            if (!response.ok) throw new Error(`AI 搭配意图服务返回 ${response.status}`);
             const envelope = JSON.parse(raw) as Record<string, any>;
             return envelope.choices?.[0]?.message?.content || envelope.choices?.[0]?.text || envelope.output_text || '';
           };
@@ -478,16 +488,17 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
             content = await call(`将以下内容只修复为合法 JSON，不要重新解释：${String(content).slice(0, 1800)}`);
             brief = normalizeDecisionBrief(extractJson(content));
           }
-          if (!brief) return sendJson(res, 502, {error: 'Kimi 返回内容无法整理成三句搭配意图；请重试或手动填写'});
+          if (!brief) return sendJson(res, 502, {error: 'AI 返回内容无法整理成三句搭配意图；请重试或手动填写'});
           return sendJson(res, 200, {brief, modelVersion: model, promptVersion});
         } catch (error) {
-          return sendJson(res, 502, {error: error instanceof Error ? error.message : 'Kimi 搭配意图起草失败'});
+          return sendJson(res, 502, {error: error instanceof Error ? error.message : 'AI 搭配意图起草失败'});
         }
       }
       if (route === '/api/local/aesthetic/text-claims') {
         if (req.method !== 'POST') return sendJson(res, 405, {error: '仅支持 POST'});
-        const apiKey = String(env.KIMI_API_KEY || '').trim();
-        if (!apiKey) return sendJson(res, 503, {error: 'Kimi 未配置；确定性分析仍可继续使用'});
+        const provider = aiProvider(env, 'text');
+        const apiKey = provider.key;
+        if (!apiKey) return sendJson(res, 503, {error: 'AI 未配置；确定性分析仍可继续使用'});
         try {
           const body = await readJsonBody(req, 512 * 1024);
           const records = Array.isArray(body.records) ? body.records.map((entry) => {
@@ -496,8 +507,8 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
           }).filter((record) => ['item', 'best_match'].includes(record.sourceType) && record.sourceId && record.text).slice(0, 8) : [];
           if (!records.length) return sendJson(res, 400, {error: '没有可提取的文字记录'});
           const itemMode = records.length === 1 && records[0]?.sourceType === 'item';
-          const endpoint = String(env.KIMI_API_ENDPOINT || 'https://api.kimi.com/coding/v1/chat/completions').trim();
-          const model = String(env.KIMI_MODEL || 'kimi-for-coding').trim();
+          const endpoint = provider.endpoint;
+          const model = provider.model;
           const prompt = `你是衣LOG个人审美档案的“显式意图提取器”。只提取原文明说的内容，严禁补写潜台词。每条 claim 必须保留原文中的精确连续子串 quote；quote 不在原文中会被系统删除。\n\n允许类型：preference, aversion, design_appreciation, emotion_identity, function_comfort, body_constraint, scene, core_item, color_operation, proportion_operation, material_operation, formality_operation, substitution_reason, constraint。\n\n返回 JSON：{"claims":[{"sourceType":"item|best_match","sourceId":"","quote":"精确原文","type":"","subjectItemIds":[],"operation":"可选","effect":"可选","condition":"可选","limitation":"可选","confidence":0.0}]}。歧义内容选择最高概率解释并降低 confidence；不要输出 Markdown。\n\n记录：${JSON.stringify(records)}`;
           const strictPrompt = body.repairContent
             ? `Repair this previous output into valid JSON only. Do not reinterpret it: ${asText(body.repairContent)}`
@@ -507,19 +518,19 @@ const createLocalAestheticKnowledgePlugin = (env: Record<string, string>): Plugi
           const response = await fetch(endpoint, {
             method: 'POST',
             headers: {'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}`},
-            body: JSON.stringify({model, max_tokens: Number(env.KIMI_TEXT_MAX_TOKENS || 4500), ...(body.structuredOutput === true ? {response_format: {type: 'json_object'}} : {}), messages: [{role: 'system', content: 'Output JSON only.'}, {role: 'user', content: strictPrompt}]}),
+            body: JSON.stringify({...provider.options, model, max_tokens: Number(env.KIMI_TEXT_MAX_TOKENS || 4500), ...(body.structuredOutput === true ? {response_format: {type: 'json_object'}} : {}), messages: [{role: 'system', content: 'Output JSON only.'}, {role: 'user', content: strictPrompt}]}),
           });
           const rawResponse = await response.text();
-          if (!response.ok) return sendJson(res, response.status === 401 || response.status === 403 ? 503 : 502, {error: `Kimi 文本服务返回 ${response.status}`});
+          if (!response.ok) return sendJson(res, response.status === 401 || response.status === 403 ? 503 : 502, {error: `AI 文本服务返回 ${response.status}`});
           const envelope = JSON.parse(rawResponse) as Record<string, any>;
           const content = envelope.choices?.[0]?.message?.content || envelope.choices?.[0]?.text || envelope.output_text;
           const parsed = extractJson(content);
-          if (!parsed) return sendJson(res, 502, {error: 'Kimi 返回内容无法解析为 JSON', rawResponse: rawResponse.slice(0, 240)});
+          if (!parsed) return sendJson(res, 502, {error: 'AI 返回内容无法解析为 JSON', rawResponse: rawResponse.slice(0, 240)});
           const claims = normalizeKimiClaims(parsed.claims, records, model);
           const reasoning = envelope.choices?.[0]?.message?.reasoning_content || '';
           return sendJson(res, 200, {modelVersion: model, structuredOutput: body.structuredOutput === true, claims, rawSummary: claims.length ? undefined : `${content}\n${reasoning}`.slice(0, 3000)});
         } catch (error) {
-          return sendJson(res, 502, {error: error instanceof Error ? error.message : 'Kimi 文本意图提取失败'});
+          return sendJson(res, 502, {error: error instanceof Error ? error.message : 'AI 文本意图提取失败'});
         }
       }
       next();

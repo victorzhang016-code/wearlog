@@ -1,9 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { aiProvider, aiFetch } from '../_lib/aiProvider.js';
 import { blockDevProdServices } from '../_lib/devGuard.js';
 import { supabaseRest, verifySupabaseToken } from '../_lib/supabase.js';
-
-const endpoint = process.env.KIMI_API_ENDPOINT || 'https://api.kimi.com/coding/v1/chat/completions';
-const model = process.env.KIMI_DECISION_MODEL || process.env.KIMI_MODEL || 'kimi-for-coding';
 
 function bodyOf(req: VercelRequest): Record<string, any> {
   if (!req.body) return {};
@@ -29,16 +27,10 @@ function normalizeBrief(value: Record<string, any> | null) {
   return brief.focus || brief.problem || brief.outcome ? brief : null;
 }
 
-async function callKimi(prompt: string) {
-  const apiKey = process.env.KIMI_API_KEY;
-  if (!apiKey) throw new Error('KIMI_API_KEY is not configured');
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ model, max_tokens: 700, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: '只输出合法 JSON，不要 Markdown。' }, { role: 'user', content: prompt }] }),
-  });
+async function callModel(prompt: string) {
+  const response = await aiFetch(aiProvider(process.env), { max_tokens: 700, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: '只输出合法 JSON，不要 Markdown。' }, { role: 'user', content: prompt }] });
   const raw = await response.text();
-  if (!response.ok) throw new Error(`Kimi 搭配意图服务返回 ${response.status}`);
+  if (!response.ok) throw new Error(`AI 搭配意图服务返回 ${response.status}`);
   const envelope = JSON.parse(raw) as Record<string, any>;
   return String(envelope.choices?.[0]?.message?.content || envelope.choices?.[0]?.text || envelope.output_text || '');
 }
@@ -70,12 +62,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const promptVersion = text(body.promptVersion, 80) || 'wearlog-decision-brief-v1';
   const prompt = `你是衣LOG的单套搭配意图起草助手。根据这一套搭配的已确认事实，写三句短意图：focus（想突出什么）、problem（要处理什么问题）、outcome（最后效果怎样）。只使用给出的原始说明、确认字段、确认文字和已有规则机制。不补写身形、场景、品牌意图或穿着反馈。语言准确、具体，每项最多60个汉字；证据不足可为空。只返回 JSON：{"brief":{"focus":"","problem":"","outcome":""}}。当前搭配事实：${JSON.stringify(evidence)}`;
   try {
-    let content = await callKimi(prompt);
+    let content = await callModel(prompt);
     let brief = normalizeBrief(extractJson(content));
-    if (!brief) { content = await callKimi(`只把下列内容修复成合法 JSON，不要重新解释：${content.slice(0, 1800)}`); brief = normalizeBrief(extractJson(content)); }
-    if (!brief) return res.status(502).json({ error: 'Kimi 返回内容无法整理成搭配意图' });
-    return res.status(200).json({ brief, modelVersion: model, promptVersion });
+    if (!brief) { content = await callModel(`只把下列内容修复成合法 JSON，不要重新解释：${content.slice(0, 1800)}`); brief = normalizeBrief(extractJson(content)); }
+    if (!brief) return res.status(502).json({ error: 'AI 返回内容无法整理成搭配意图' });
+    return res.status(200).json({ brief, modelVersion: aiProvider(process.env).model, promptVersion });
   } catch (error) {
-    return res.status(502).json({ error: error instanceof Error ? error.message : 'Kimi 搭配意图解析失败' });
+    return res.status(502).json({ error: error instanceof Error ? error.message : 'AI 搭配意图解析失败' });
   }
 }

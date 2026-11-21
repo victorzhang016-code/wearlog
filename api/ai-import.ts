@@ -1,15 +1,11 @@
+import { analyzeStyleEvidence } from './_lib/styleInsightService.js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { aiProvider, aiFetch } from './_lib/aiProvider.js';
 import { blockDevProdServices } from './_lib/devGuard.js';
 import { supabaseRest, verifySupabaseToken } from './_lib/supabase.js';
 
 const MAX_TEXT_BODY_CHARS = 600_000;
 const MAX_VISION_BODY_CHARS = 4_000_000;
-
-// The default is the Kimi Code OpenAI-compatible endpoint. If the borrowed key
-// is a Platform key, set KIMI_API_ENDPOINT and KIMI_MODEL in Vercel instead.
-const KIMI_API_ENDPOINT = process.env.KIMI_API_ENDPOINT
-  || 'https://api.kimi.com/coding/v1/chat/completions';
-const KIMI_MODEL = process.env.KIMI_MODEL || 'kimi-for-coding';
 
 function getBody(req: VercelRequest): Record<string, any> {
   if (!req.body) return {};
@@ -29,14 +25,7 @@ function validImageDataUrl(value: unknown): value is string {
     && /^data:image\/(?:jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i.test(value);
 }
 
-function kimiHeaders(apiKey: string): HeadersInit {
-  return {
-    authorization: `Bearer ${apiKey}`,
-    'content-type': 'application/json',
-  };
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+async function handleRequest(req: VercelRequest, res: VercelResponse) {
   if (blockDevProdServices(res)) return;
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
 
@@ -69,8 +58,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(503).json({ error: '限流服务暂时不可用，请稍后重试' });
   }
 
-  const apiKey = process.env.KIMI_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'KIMI_API_KEY is not configured' });
+  if (body.task === 'style_insights') {
+    try { return res.status(200).json(await analyzeStyleEvidence(body.evidence, process.env)); }
+    catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : '分析暂时不可用' }); }
+  }
+
+  let config: ReturnType<typeof aiProvider>;
+  try { config = aiProvider(process.env, mode); } catch { return res.status(503).json({ error: 'AI 服务配置不可用' }); }
+  if (!config.key) return res.status(503).json({ error: 'AI 服务尚未配置' });
 
   if (mode === 'vision') {
     const image = body.image;
@@ -88,11 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(413).json({ error: '图片过大，请使用更小的图片' });
     }
 
-    const aiRes = await fetch(KIMI_API_ENDPOINT, {
-      method: 'POST',
-      headers: kimiHeaders(apiKey),
-      body: JSON.stringify({
-        model: KIMI_MODEL,
+    const aiRes = await aiFetch(config, {
         max_tokens: Number(process.env[isWardrobeItemDraft ? 'KIMI_ITEM_DRAFT_MAX_TOKENS' : 'KIMI_IMAGE_MAX_TOKENS'] || (isWardrobeItemDraft ? 256 : 4096)),
         messages: [
           { role: 'system', content: '你是一个克制、敏锐的视觉分析助手。只分析图片中可见的信息，不臆测不可见事实。' },
@@ -104,7 +95,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ],
           },
         ],
-      }),
     });
     return res.status(aiRes.status).json(await readJsonResponse(aiRes));
   }
@@ -115,12 +105,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(413).json({ error: '内容过长，请分批导入' });
   }
 
-  // Kept for backwards compatibility with the old text-import UI. It now uses
-  // the configured Kimi model instead of the obsolete Claude Sonnet relay.
-  const aiRes = await fetch(KIMI_API_ENDPOINT, {
-    method: 'POST',
-    headers: kimiHeaders(apiKey),
-    body: JSON.stringify({ model: KIMI_MODEL, max_tokens: 16_384, messages }),
-  });
+  const aiRes = await aiFetch(config, { max_tokens: 16_384, messages });
   return res.status(aiRes.status).json(await readJsonResponse(aiRes));
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  try { return await handleRequest(req, res); }
+  catch (error) {
+    return res.status(502).json({ error: error instanceof Error && error.name === 'TimeoutError' ? '分析时间较长，请稍后重试' : 'AI 服务连接失败，请稍后重试' });
+  }
 }

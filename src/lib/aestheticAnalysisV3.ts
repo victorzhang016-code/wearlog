@@ -9,8 +9,8 @@ import type {
 } from "./aestheticContracts";
 import { PALETTE_RULE_VERSION, evaluateOutfitPalette, type PaletteAssessment, type PaletteSelection } from "./outfitPalette";
 
-export const AESTHETIC_ENGINE_VERSION = "wearlog-aesthetic-v3.5.0";
-export const AESTHETIC_V4_ENGINE_VERSION = "wearlog-aesthetic-v4.1.0";
+export const AESTHETIC_ENGINE_VERSION = "wearlog-aesthetic-v3.6.0";
+export const AESTHETIC_V4_ENGINE_VERSION = "wearlog-aesthetic-v4.2.0";
 export const AESTHETIC_SCHEMA_VERSION = "wearlog-aesthetic-knowledge-v3";
 export const TEXT_PROMPT_VERSION = "wearlog-explicit-intent-v1";
 export const DECISION_BRIEF_PROMPT_VERSION = "wearlog-decision-brief-v1";
@@ -769,7 +769,7 @@ function dominantColor(colors: PerceptualColor[], itemId: string) {
 
 // The stored RGB remains the fact. This is only a readable, repeatable bucket for
 // aggregation; it never replaces the original colour or its role in the item.
-function colorFamily(color: PerceptualColor): ColorFamily {
+export function colorFamily(color: PerceptualColor): ColorFamily {
   const [lightness, chroma, hue] = color.oklch;
   if (chroma < 0.035) {
     if (lightness < 0.28) return "黑";
@@ -1109,16 +1109,18 @@ function validationReport(cases: OutfitCaseGraph[], items: LocalItem[], atoms: S
       training.forEach((outfit) => outfit.primaryItems.filter((item) => item.slot === slot).forEach((item) => popularity.set(item.itemId, (popularity.get(item.itemId) || 0) + 1)));
       const baseline = [...popularity].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id);
       if (baseline.includes(target.itemId)) baselineHits += 1;
-      const anchorAtoms = target.itemId === held.anchorItemId
+      const anchorAtoms = (target.itemId === held.anchorItemId
         ? held.primaryItems.filter((item) => item.itemId !== target.itemId).flatMap((item) => atomsByItem.get(item.itemId) || [])
-        : atomsByItem.get(held.anchorItemId) || [];
+        : atomsByItem.get(held.anchorItemId) || []).filter((atom) => atom.evidenceStatus === 'confirmed');
       const candidates = items.filter((item) => popularity.has(item.id));
       const scored = candidates.map((item) => {
-        const shared = sharedConcepts(anchorAtoms, atomsByItem.get(item.id) || []).length;
+        const shared = sharedConcepts(anchorAtoms, (atomsByItem.get(item.id) || []).filter((atom) => atom.evidenceStatus === 'confirmed')).length;
         const pairContexts = target.itemId === held.anchorItemId
           ? training.filter((outfit) => outfit.anchorItemId === item.id && held.primaryItems.some((heldItem) => heldItem.itemId !== target.itemId && outfit.primaryItems.some((entry) => entry.itemId === heldItem.itemId))).length
           : training.filter((outfit) => outfit.anchorItemId === held.anchorItemId && outfit.primaryItems.some((entry) => entry.itemId === item.id)).length;
-        const variantContexts = target.itemId === held.anchorItemId ? 0 : substitutions.filter((contract) => contract.contextAnchorIds.includes(held.anchorItemId) && (contract.fromItemId === item.id || contract.toItemId === item.id)).length;
+        // Use variants from the training fold only. The global substitution list
+        // includes the held outfit and would otherwise leak its answer.
+        const variantContexts = target.itemId === held.anchorItemId ? 0 : training.filter((outfit) => outfit.anchorItemId === held.anchorItemId && outfit.variantItems.some((variant) => variant.slot === slot && (variant.itemId === item.id || variant.replacesItemId === item.id))).length;
         return { id: item.id, score: pairContexts * 8 + variantContexts * 3 + shared * 1.5 + (popularity.get(item.id) || 0) * 0.25 };
       }).sort((a, b) => b.score - a.score).slice(0, 3).map((entry) => entry.id);
       if (scored.includes(target.itemId)) engineHits += 1;
