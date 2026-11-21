@@ -79,16 +79,16 @@ export function AestheticProfilePage() {
       <div className="grid min-h-[55vh] place-items-center" role="status">
         <p className="flex items-center gap-3 font-story text-graphite">
           <Loader2 className="h-5 w-5 animate-spin" />
-          正在翻阅你的衣柜…
+          正在加载衣物与搭配…
         </p>
       </div>
     );
   if (itemsError || matchesError)
     return (
       <div className="py-20 text-center">
-        <h1 className="font-story text-2xl">衣柜记录暂时没能打开</h1>
+        <h1 className="font-story text-2xl">衣柜记录加载失败</h1>
         <p className="my-4 text-sm text-graphite">
-          请重新加载，再来看看你的色卡与搭配。
+          请重新加载后再试。
         </p>
         <button className="back-link" onClick={() => window.location.reload()}>
           <RefreshCw size={16} />

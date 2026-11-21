@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
   ArrowLeft,
@@ -21,9 +21,8 @@ import {
   type StyleInsight,
 } from "../lib/styleInsights";
 import { requestStyleInsights } from "../lib/requestStyleInsights";
-import { getTagTheme } from "../lib/tagThemes";
-import { resolveMediaUrl } from "../lib/media";
 import { ColorSwatchCard, ColorSwatchFan } from "./ColorSwatchCard";
+import { WardrobeItemCard } from "./WardrobeItemCard";
 import "./StyleJournalExperience.css";
 
 type Props = {
@@ -38,71 +37,19 @@ const rgb = (color: PerceptualColor) => ({
   b: color.rgb[2],
 });
 
-function GarmentImage({ item }: { item: WardrobeItem }) {
-  const [failed, setFailed] = useState(false);
-  const src = resolveMediaUrl(item.imageUrl);
-  return src && !failed ? (
-    <img
-      src={src}
-      alt={item.name}
-      loading="lazy"
-      onError={() => setFailed(true)}
-    />
-  ) : (
-    <span className="sj-photo-missing">
-      <Shirt size={28} strokeWidth={1} />
-      <span>{item.name}</span>
-    </span>
-  );
-}
-
-function journalTagStyle(id: string): CSSProperties {
-  const theme = getTagTheme(id);
-  return {
-    "--sj-paper": theme.bgColor,
-    "--sj-paper-ink": theme.textPrimary,
-    "--sj-paper-muted": theme.textSecondary,
-    "--sj-paper-edge": theme.borderEdge,
-    "--sj-paper-hole": theme.holeColor,
-    "--sj-paper-texture": theme.texture,
-  } as CSSProperties;
-}
-
-function ItemCard({
-  item,
-  samples = [],
-}: {
-  item: WardrobeItem;
-  samples?: PerceptualColor[];
-}) {
+function ItemCard({ item }: { item: WardrobeItem }) {
   return (
     <Link
       to={`/item/${item.id}`}
-      className="sj-item"
-      style={journalTagStyle(item.id)}
+      className="sj-item-link"
+      aria-label={`查看单品：${item.name}`}
     >
-      <div className="sj-item-photo">
-        <span className="sj-tag-meta">
-          {item.category}
-          <i className="sj-tag-eyelet" aria-hidden="true" />
-        </span>
-        <GarmentImage key={item.imageUrl} item={item} />
-      </div>
-      <div className="sj-item-caption">
-        <p>{item.name}</p>
-        <span>{item.brand || item.category}</span>
-        {!!samples.length && (
-          <div className="sj-mini-colors">
-            {samples.map((color, index) => (
-              <i
-                key={index}
-                style={{ background: color.hex }}
-                title={`${COLOR_ROLE_LABELS[color.role]} ${color.hex}`}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      <WardrobeItemCard
+        item={item}
+        index={0}
+        eager={false}
+        onCardClick={() => {}}
+      />
     </Link>
   );
 }
@@ -129,33 +76,9 @@ function OutfitBoard({
     )
     .filter((entry) => entry.item);
   return (
-    <div
-      className={`sj-outfit-board ${parts.length <= 4 ? "sj-outfit-board--compact" : ""}`}
-      style={
-        {
-          "--sj-rows": Math.max(
-            2,
-            parts.length <= 4
-              ? Math.ceil(parts.length / 2)
-              : Math.ceil((parts.length + 1) / 3),
-          ),
-          "--sj-mobile-rows": Math.ceil(parts.length / 2),
-        } as CSSProperties
-      }
-    >
+    <div className="sj-outfit-board masonry-grid">
       {parts.map(({ item, slot }, index) => (
-        <div
-          className={`sj-board-piece sj-board-piece--${slot}`}
-          key={`${slot}:${index}`}
-          style={journalTagStyle(item!.id)}
-        >
-          <div className="sj-tag-meta">
-            {item!.category}
-            <i className="sj-tag-eyelet" aria-hidden="true" />
-          </div>
-          <GarmentImage key={item!.imageUrl} item={item!} />
-          <span>{item!.name}</span>
-        </div>
+        <ItemCard key={`${slot}:${index}`} item={item!} />
       ))}
       {!parts.length && <p>这套搭配的单品暂时不可用</p>}
     </div>
@@ -248,19 +171,18 @@ function PaletteChapter({
     <div className="sj-chapter">
       <section className="sj-palette-intro">
         <div>
-          <p className="sj-eyebrow">Color archive / 01</p>
           <h2>
             {groups
               .slice(0, 2)
               .map((group) => `${group.family}色`)
               .join("与")}
-            ，<br />
-            是衣柜里最多的颜色。
+            最多
           </h2>
-          <p>按色系整理衣物，查看已有的配色。</p>
+          <p>
+            已确认 {confirmedIds.size} 件衣物的颜色，共 {items.length} 件。
+          </p>
           <span className="sj-caption">
-            已整理 {confirmedIds.size} / {items.length} 件衣物 ·
-            色卡来自已确认的颜色
+            {COLOR_ROLE_LABELS[role]} · 同一件衣物可以属于多个色系
           </span>
         </div>
         <div className="sj-palette-fan" aria-label="衣柜代表色">
@@ -277,8 +199,7 @@ function PaletteChapter({
       <section aria-labelledby="sj-colors-title">
         <div className="sj-section-heading">
           <div>
-            <h2 id="sj-colors-title">我的色卡</h2>
-            <p>选一个色系，查看衣物和搭配。</p>
+            <h2 id="sj-colors-title">按颜色查看衣物</h2>
           </div>
           <div className="sj-filters" aria-label="按颜色角色筛选">
             {Object.entries(COLOR_ROLE_LABELS).map(([value, label]) => (
@@ -301,33 +222,41 @@ function PaletteChapter({
               aria-label={`${group.family}色，${group.itemIds.length} 件衣物`}
               onClick={() => choose("color", group.family)}
             >
-              <ColorSwatchCard
-                color={rgb(group.color)}
-                code={`${group.itemIds.length} 件衣物`}
-                role={`${group.family}色系`}
-              />
-              <span className="sj-swatch-marker" />
+              <i style={{ background: group.color.hex }} aria-hidden="true" />
+              <span>{group.family}色</span>
+              <span className="sj-color-count">{group.itemIds.length}</span>
             </button>
           ))}
         </div>
         <div className="sj-color-selection">
           <div>
             <h3>
-              {selected.family}色，藏在这 {selectedItems.length} 件里
+              {selected.family}色 · {selectedItems.length} 件
             </h3>
-            <p>同一件衣服可以有多个颜色。点开单品，查看或调整它的色卡。</p>
           </div>
-          <span className="sj-caption">按色系归类，保留每件的原色</span>
+          <details className="sj-color-samples">
+            <summary>
+              查看原色色卡 <ChevronDown size={16} />
+            </summary>
+            <div className="sj-sample-list">
+              {[
+                ...new Map(
+                  selected.samples.map((color) => [color.hex, color]),
+                ).values(),
+              ].map((color) => (
+                <ColorSwatchCard
+                  key={color.hex}
+                  color={rgb(color)}
+                  role={`${new Set(selected.samples.filter((sample) => sample.hex === color.hex).map((sample) => sample.itemId)).size} 件衣物`}
+                  code={color.hex}
+                />
+              ))}
+            </div>
+          </details>
         </div>
-        <div className="sj-item-grid">
+        <div className="sj-item-grid masonry-grid">
           {selectedItems.slice(0, visible).map((item) => (
-            <ItemCard
-              key={item.id}
-              item={item}
-              samples={selected.samples.filter(
-                (entry) => entry.itemId === item.id,
-              )}
-            />
+            <ItemCard key={item.id} item={item} />
           ))}
         </div>
         {visible < selectedItems.length && (
@@ -344,45 +273,31 @@ function PaletteChapter({
         <section className="sj-pairings">
           <div className="sj-section-heading">
             <div>
-              <h2>这个颜色，你这样搭过</h2>
-              <p>把单件的颜色放回整套搭配里看。</p>
+              <h2>含{selected.family}色的搭配</h2>
             </div>
             <span className="sj-caption">{paired.length} 套 Best Match</span>
           </div>
           <div className="sj-look-grid">
-            {paired.slice(0, allPairs ? paired.length : 3).map((match) => {
-              const ids = Object.values(match.items).flatMap((slots) =>
-                slots.map((slot) => slot.primary),
-              );
-              const palette = colors.filter(
-                (color) =>
-                  color.evidenceStatus === "confirmed" &&
-                  ids.includes(color.itemId) &&
-                  color.role === "dominant",
-              );
-              return (
-                <Link
-                  to={`/best-match/${match.id}`}
-                  className="sj-look"
-                  key={match.id}
-                >
-                  <OutfitBoard match={match} items={items} />
-                  <div className="sj-look-caption">
-                    <h3>{match.name || "我的搭配"}</h3>
-                    <ArrowRight size={16} />
-                  </div>
-                  <div className="sj-palette-strip">
-                    {palette.map((color, index) => (
-                      <span
-                        key={index}
-                        style={{ background: color.hex }}
-                        title={color.hex}
-                      />
-                    ))}
-                  </div>
-                </Link>
-              );
-            })}
+            {paired
+              .slice(0, allPairs ? paired.length : 3)
+              .map((match, index) => {
+                return (
+                  <details
+                    className="sj-look"
+                    key={match.id}
+                    open={index === 0}
+                  >
+                    <summary className="sj-look-caption">
+                      <span>{match.name || "我的搭配"}</span>
+                      <ChevronDown size={16} />
+                    </summary>
+                    <OutfitBoard match={match} items={items} />
+                    <Link to={`/best-match/${match.id}`} className="sj-button">
+                      查看搭配 <ArrowRight size={16} />
+                    </Link>
+                  </details>
+                );
+              })}
           </div>
           {paired.length > 3 && (
             <button
@@ -420,9 +335,8 @@ function SwapChapter({ items, matches, run }: Omit<Props, "colors">) {
     <section className="sj-swap-section" aria-labelledby="sj-swap-title">
       <div className="sj-section-heading">
         <div>
-          <p className="sj-eyebrow">Variations / 03</p>
           <h2 id="sj-swap-title">同类替换</h2>
-          <p>对照你保存过的替换，看看换一件后的整套效果。</p>
+          <p>对比已保存的备选单品。</p>
         </div>
       </div>
       <div className="sj-filters" aria-label="替换品类">
@@ -447,10 +361,10 @@ function SwapChapter({ items, matches, run }: Omit<Props, "colors">) {
               <span>{context.name || "我的搭配"}</span>
               <div className="sj-filters">
                 <button aria-pressed={!after} onClick={() => setAfter(false)}>
-                  原搭配
+                  替换前
                 </button>
                 <button aria-pressed={after} onClick={() => setAfter(true)}>
-                  换一件
+                  替换后
                 </button>
               </div>
             </div>
@@ -469,7 +383,7 @@ function SwapChapter({ items, matches, run }: Omit<Props, "colors">) {
           </div>
           <div className="sj-swap-detail">
             <label className="sj-select-label">
-              选一组同类替换
+              替换单品
               <select
                 value={selected.contract.id}
                 onChange={(event) => {
@@ -485,27 +399,17 @@ function SwapChapter({ items, matches, run }: Omit<Props, "colors">) {
                 ))}
               </select>
             </label>
-            <div className="sj-swap-pair">
+            <div className="sj-swap-pair masonry-grid">
               <ItemCard item={selected.from} />
               <ArrowLeftRight size={22} strokeWidth={1} />
               <ItemCard item={selected.to} />
             </div>
             <div className="sj-swap-explanation">
-              <h3>你保存过的替换</h3>
-              <p>
-                在 {selected.contexts.length} 套搭配里，你把这两件
-                {selected.from.category === "鞋子"
-                  ? "鞋"
-                  : selected.from.category}
-                设为同一位置的备选。
-              </p>
-              <p className="sj-caption">
-                保留其余单品，对照颜色、轮廓和细节的变化。
-              </p>
+              <p>这两件单品在 {selected.contexts.length} 套搭配中互为备选。</p>
             </div>
             {selected.contexts.length > 1 && (
               <label className="sj-select-label">
-                放在哪套搭配里看
+                对比搭配
                 <select
                   value={context.id}
                   onChange={(event) => setContextId(event.target.value)}
@@ -519,7 +423,7 @@ function SwapChapter({ items, matches, run }: Omit<Props, "colors">) {
               </label>
             )}
             <Link to={`/best-match/${context.id}`} className="sj-button">
-              打开这套搭配 <ArrowRight size={16} />
+              查看搭配 <ArrowRight size={16} />
             </Link>
           </div>
         </div>
@@ -528,7 +432,7 @@ function SwapChapter({ items, matches, run }: Omit<Props, "colors">) {
           <h3>还没有{category === "全部" ? "" : category}替换记录</h3>
           <p>在 Best Match 中为某件衣服添加同类变体，这里就能并排比较。</p>
           <Link to="/best-match" className="back-link">
-            去看看我的搭配 <ArrowRight size={16} />
+            去 Best Match 添加备选 <ArrowRight size={16} />
           </Link>
         </div>
       )}
@@ -541,7 +445,6 @@ function OutfitChapter({
   items,
   matches,
   run,
-  colors,
   generated,
   onGenerated,
 }: Props & {
@@ -575,9 +478,6 @@ function OutfitChapter({
     (entry) => entry.id === ids[exampleIndex % ids.length],
   );
   const currentQuote = selected?.quotes.find((q) => q.matchId === match?.id);
-  const primaryIds = match
-    ? Object.values(match.items).flatMap((parts) => parts.map((p) => p.primary))
-    : [];
   async function analyze() {
     setBusy(true);
     setNotice("");
@@ -603,13 +503,12 @@ function OutfitChapter({
       <section>
         <div className="sj-section-heading sj-style-heading">
           <div>
-            <p className="sj-eyebrow">Personal notes / 02</p>
-            <h2>你的穿衣偏好</h2>
-            <p>比例怎么调，细节怎么选。看看你反复在意的事。</p>
+            <h2>穿搭偏好</h2>
+            <p>从你的搭配和记录中，整理比例、细节与穿衣习惯。</p>
           </div>
           <div className="sj-analyze-action">
             <button
-              className="sj-button"
+              className="sj-button sj-button--primary header-action-button"
               disabled={
                 busy || evidence.filter((e) => e.story.trim()).length < 2
               }
@@ -618,7 +517,10 @@ function OutfitChapter({
               {busy ? "正在分析…" : generated ? "重新分析" : "分析穿搭偏好"}
               <ArrowRight size={15} />
             </button>
-            <span>AI 结合搭配说明归纳，附原文出处</span>
+            {evidence.filter((e) => e.story.trim()).length < 2 && (
+              <span>至少为两套搭配添加说明后可分析</span>
+            )}
+            {busy && <span role="status">正在阅读搭配记录，请稍候</span>}
           </div>
         </div>
         {notice && (
@@ -628,8 +530,24 @@ function OutfitChapter({
         )}
         {selected && match ? (
           <>
-            <div className="sj-story-tabs" aria-label="选择穿搭脉络">
-              {stories.map((story, index) => (
+            <label className="sj-select-label sj-story-select">
+              查看分析
+              <select
+                value={selected.id}
+                onChange={(event) => {
+                  setSelectedId(event.target.value);
+                  setExampleIndex(0);
+                }}
+              >
+                {stories.map((story) => (
+                  <option key={story.id} value={story.id}>
+                    {story.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="sj-story-tabs" aria-label="选择穿搭分析">
+              {stories.map((story) => (
                 <button
                   key={story.id}
                   aria-pressed={selected.id === story.id}
@@ -643,105 +561,69 @@ function OutfitChapter({
                     setExampleIndex(0);
                   }}
                 >
-                  <span className="sj-tab-meta">
-                    {String(index + 1).padStart(2, "0")} / {story.category}
-                  </span>
                   {story.title}
+                  <ArrowRight size={16} aria-hidden="true" />
                 </button>
               ))}
             </div>
             <article className="sj-story-spread">
               <div className="sj-story-visual">
                 <div className="sj-board-heading">
-                  <span>BEST MATCH</span>
+                  <span>相关搭配</span>
                   <span>
-                    {String((exampleIndex % ids.length) + 1).padStart(2, "0")} /{" "}
-                    {String(ids.length).padStart(2, "0")}
+                    {(exampleIndex % ids.length) + 1} / {ids.length}
                   </span>
                 </div>
-                <Link
-                  to={`/best-match/${match.id}`}
-                  aria-label={`查看搭配：${match.name || "我的搭配"}`}
-                >
-                  <OutfitBoard match={match} items={items} />
-                </Link>
                 <div className="sj-example-caption">
                   <Link to={`/best-match/${match.id}`}>
                     {match.name || "我的搭配"}
                     <ArrowRight size={15} />
                   </Link>
                   <button
-                    aria-label="看下一套代表搭配"
+                    className="sj-button"
+                    aria-label="下一套相关搭配"
                     disabled={ids.length < 2}
                     onClick={() => setExampleIndex((v) => v + 1)}
                   >
-                    <ArrowRight size={18} />
+                    下一套 <ArrowRight size={16} />
                   </button>
                 </div>
+                <OutfitBoard match={match} items={items} />
               </div>
               <div className="sj-story-copy">
                 <span className="sj-paper-eyelet" aria-hidden="true" />
                 <span className="sj-caption">
                   {selected.source === "ai"
-                    ? "AI 解读 · 待你判断"
+                    ? "AI 分析"
                     : selected.source === "computed"
-                      ? "搭配中的观察"
-                      : "你写过的想法"}{" "}
-                  · {ids.length} 套
+                      ? "搭配统计"
+                      : "记录整理"}{" "}
+                  · 基于 {ids.length} 套搭配
                 </span>
                 <h3>{selected.title}</h3>
                 <p className="sj-story-conclusion">{selected.summary}</p>
                 {currentQuote && (
                   <blockquote className="sj-source-quote">
                     <p>“{currentQuote.text}”</p>
-                    <cite>你在「{match.name || "这套搭配"}」中写道</cite>
+                    <cite>摘自「{match.name || "这套搭配"}」</cite>
                   </blockquote>
                 )}
                 {selected.observation && (
                   <div className="sj-structure-observation">
-                    <div className="sj-observation-number">
-                      <strong>{selected.observation.support}</strong>
-                      <span> / {selected.observation.total} 套</span>
-                    </div>
-                    <p>{selected.observation.label}</p>
-                    <div className="sj-observation-bar">
-                      <span
-                        style={{
-                          width: `${(100 * selected.observation.support) / selected.observation.total}%`,
-                        }}
-                      />
-                    </div>
+                    <p>
+                      {selected.observation.total} 套
+                      {selected.observation.label}中，
+                      {selected.observation.support} 套采用这一组合。
+                    </p>
                   </div>
                 )}
                 <div className="sj-note">
-                  <span>下次可以试试</span>
+                  <h4>搭配建议</h4>
                   <p>{selected.suggestion}</p>
-                </div>
-                <div className="sj-story-colors">
-                  {colors
-                    .filter(
-                      (c) =>
-                        c.evidenceStatus === "confirmed" &&
-                        c.role === "dominant" &&
-                        primaryIds.includes(c.itemId),
-                    )
-                    .slice(0, 3)
-                    .map((color, index) => (
-                      <ColorSwatchCard
-                        key={index}
-                        color={rgb(color)}
-                        role={
-                          items.find((i) => i.id === color.itemId)?.name ||
-                          "主色"
-                        }
-                        code={color.hex}
-                        size="sm"
-                      />
-                    ))}
                 </div>
                 <details className="sj-evidence" key={selected.id}>
                   <summary>
-                    为什么这样说 <ChevronDown size={15} />
+                    查看分析依据 <ChevronDown size={16} />
                   </summary>
                   {selected.source === "computed" ? (
                     <p>
@@ -750,8 +632,8 @@ function OutfitChapter({
                   ) : (
                     <p>
                       {selected.source === "ai"
-                        ? "这是根据你的原话作出的解读，引用可核对，结论仍可能有偏差。"
-                        : "按你当前的搭配说明整理，具体感受以原话为准。"}
+                        ? "AI 根据以下搭配记录归纳，结论可能有偏差。"
+                        : "根据以下搭配记录整理。"}
                     </p>
                   )}
                   {selected.quotes.map((q) => (
@@ -778,14 +660,12 @@ function OutfitChapter({
             {matches.length ? (
               <div className="sj-look-grid">
                 {matches.slice(0, 3).map((entry) => (
-                  <Link
-                    className="sj-look"
-                    key={entry.id}
-                    to={`/best-match/${entry.id}`}
-                  >
+                  <div className="sj-look" key={entry.id}>
                     <OutfitBoard match={entry} items={items} />
-                    <h3>{entry.name || "我的搭配"}</h3>
-                  </Link>
+                    <Link className="sj-button" to={`/best-match/${entry.id}`}>
+                      {entry.name || "查看搭配"} <ArrowRight size={16} />
+                    </Link>
+                  </div>
                 ))}
               </div>
             ) : (
@@ -817,19 +697,13 @@ export function StyleJournalExperience(props: Props) {
         </Link>
         <div className="sj-title-row">
           <div>
-            <p className="sj-eyebrow">Style Journal</p>
             <h1>我的风格志</h1>
           </div>
-          <p>
-            衣柜配色，
-            <br />
-            穿搭偏好。
-          </p>
         </div>
         <nav className="sj-main-tabs" aria-label="风格志章节">
           {[
-            { id: "colors", label: "我的色卡", en: "Colors" },
-            { id: "outfits", label: "我的穿搭", en: "Outfits" },
+            { id: "colors", label: "我的色卡" },
+            { id: "outfits", label: "我的穿搭" },
           ].map((entry) => (
             <button
               key={entry.id}
@@ -841,7 +715,6 @@ export function StyleJournalExperience(props: Props) {
               }}
             >
               {entry.label}
-              <span>{entry.en}</span>
             </button>
           ))}
         </nav>
@@ -849,10 +722,10 @@ export function StyleJournalExperience(props: Props) {
       {!props.items.length ? (
         <div className="sj-empty">
           <Shirt size={42} strokeWidth={1} />
-          <h2>把第一件喜欢的衣服留下来</h2>
-          <p>它的添加衣物、保存搭配后，在这里查看配色和穿搭分析。</p>
+          <h2>还没有衣物记录</h2>
+          <p>添加衣物、保存搭配后，在这里查看配色和穿搭分析。</p>
           <Link className="sj-button" to="/">
-            开始记录衣柜 <ArrowRight size={16} />
+            添加衣物 <ArrowRight size={16} />
           </Link>
         </div>
       ) : tab === "colors" ? (
@@ -864,10 +737,6 @@ export function StyleJournalExperience(props: Props) {
           onGenerated={setGenerated}
         />
       )}
-      <footer className="sj-footer">
-        <span>WEARLOG · PERSONAL STYLE JOURNAL</span>
-        <span>只属于你的衣柜记录</span>
-      </footer>
     </main>
   );
 }
