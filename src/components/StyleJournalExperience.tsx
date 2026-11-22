@@ -23,6 +23,8 @@ import {
 import { requestStyleInsights } from "../lib/requestStyleInsights";
 import { ColorSwatchCard, ColorSwatchFan } from "./ColorSwatchCard";
 import { WardrobeItemCard } from "./WardrobeItemCard";
+import { JournalColorPatterns } from "./JournalColorPatterns";
+import { journalPaletteAnalysis } from "../lib/journalPaletteAnalysis";
 import "./StyleJournalExperience.css";
 
 type Props = {
@@ -105,7 +107,10 @@ function PaletteChapter({
   const selected =
     groups.find((group) => group.family === params.get("color")) || groups[0];
   const [visible, setVisible] = useState(8);
-  const [allPairs, setAllPairs] = useState(false);
+  const paletteAnalysis = useMemo(
+    () => journalPaletteAnalysis(colors, items, matches),
+    [colors, items, matches],
+  );
   const confirmedIds = new Set(
     colors
       .filter(
@@ -132,20 +137,12 @@ function PaletteChapter({
             ),
         )
     : [];
-  const paired = selected
-    ? matches.filter((match) =>
-        Object.values(match.items).some((slots) =>
-          slots.some((slot) => selected.itemIds.includes(slot.primary)),
-        ),
-      )
-    : [];
   const choose = (key: string, value: string) => {
     const next = new URLSearchParams(params);
     next.set(key, value);
     if (key === "role") next.delete("color");
     setParams(next, { replace: true });
     setVisible(8);
-    setAllPairs(false);
   };
   if (!groups.length)
     return (
@@ -172,22 +169,20 @@ function PaletteChapter({
       <section className="sj-palette-intro">
         <div>
           <h2>
-            {groups
-              .slice(0, 2)
-              .map((group) => `${group.family}色`)
-              .join("与")}
-            最多
+            {paletteAnalysis.choices.length
+              ? `黑白灰之外，${paletteAnalysis.choices[0].family}色最多`
+              : "已确认的颜色以黑白灰为主"}
           </h2>
           <p>
             已确认 {confirmedIds.size} 件衣物的颜色，共 {items.length} 件。
           </p>
           <span className="sj-caption">
-            {COLOR_ROLE_LABELS[role]} · 同一件衣物可以属于多个色系
+            按已保存的衣物整理 · 同一件可以属于多个色系
           </span>
         </div>
         <div className="sj-palette-fan" aria-label="衣柜代表色">
           <ColorSwatchFan
-            colors={groups.slice(0, 5).map((group) => ({
+            colors={paletteAnalysis.families.slice(0, 5).map((group) => ({
               color: rgb(group.color),
               role: `${group.family}色 · ${group.itemIds.length} 件`,
             }))}
@@ -196,10 +191,11 @@ function PaletteChapter({
           />
         </div>
       </section>
+      <JournalColorPatterns analysis={paletteAnalysis} matches={matches} />
       <section aria-labelledby="sj-colors-title">
         <div className="sj-section-heading">
           <div>
-            <h2 id="sj-colors-title">按颜色查看衣物</h2>
+            <h2 id="sj-colors-title">查看全部色卡</h2>
           </div>
           <div className="sj-filters" aria-label="按颜色角色筛选">
             {Object.entries(COLOR_ROLE_LABELS).map(([value, label]) => (
@@ -234,7 +230,7 @@ function PaletteChapter({
               {selected.family}色 · {selectedItems.length} 件
             </h3>
           </div>
-          <details className="sj-color-samples">
+          <details className="sj-color-samples" open>
             <summary>
               查看原色色卡 <ChevronDown size={16} />
             </summary>
@@ -254,62 +250,30 @@ function PaletteChapter({
             </div>
           </details>
         </div>
-        <div className="sj-item-grid masonry-grid">
-          {selectedItems.slice(0, visible).map((item) => (
-            <ItemCard key={item.id} item={item} />
-          ))}
-        </div>
-        {visible < selectedItems.length && (
-          <button
-            className="sj-more"
-            onClick={() => setVisible((value) => value + 8)}
-          >
-            再看 {Math.min(8, selectedItems.length - visible)} 件{" "}
+        <details
+          className="sj-palette-detail sj-garment-source"
+          key={`${selected.family}:${role}`}
+        >
+          <summary>
+            查看{selected.family}色的 {selectedItems.length} 件衣物{" "}
             <ChevronDown size={16} />
-          </button>
-        )}
-      </section>
-      {!!paired.length && (
-        <section className="sj-pairings">
-          <div className="sj-section-heading">
-            <div>
-              <h2>含{selected.family}色的搭配</h2>
-            </div>
-            <span className="sj-caption">{paired.length} 套 Best Match</span>
+          </summary>
+          <div className="sj-item-grid masonry-grid">
+            {selectedItems.slice(0, visible).map((item) => (
+              <ItemCard key={item.id} item={item} />
+            ))}
           </div>
-          <div className="sj-look-grid">
-            {paired
-              .slice(0, allPairs ? paired.length : 3)
-              .map((match, index) => {
-                return (
-                  <details
-                    className="sj-look"
-                    key={match.id}
-                    open={index === 0}
-                  >
-                    <summary className="sj-look-caption">
-                      <span>{match.name || "我的搭配"}</span>
-                      <ChevronDown size={16} />
-                    </summary>
-                    <OutfitBoard match={match} items={items} />
-                    <Link to={`/best-match/${match.id}`} className="sj-button">
-                      查看搭配 <ArrowRight size={16} />
-                    </Link>
-                  </details>
-                );
-              })}
-          </div>
-          {paired.length > 3 && (
+          {visible < selectedItems.length && (
             <button
               className="sj-more"
-              onClick={() => setAllPairs((value) => !value)}
+              onClick={() => setVisible((value) => value + 8)}
             >
-              {allPairs ? "收起搭配" : `查看其余 ${paired.length - 3} 套`}{" "}
+              再看 {Math.min(8, selectedItems.length - visible)} 件{" "}
               <ChevronDown size={16} />
             </button>
           )}
-        </section>
-      )}
+        </details>
+      </section>
     </div>
   );
 }
@@ -702,8 +666,8 @@ export function StyleJournalExperience(props: Props) {
         </div>
         <nav className="sj-main-tabs" aria-label="风格志章节">
           {[
-            { id: "colors", label: "我的色卡" },
-            { id: "outfits", label: "我的穿搭" },
+            { id: "colors", label: "我的色卡", english: "My Colors" },
+            { id: "outfits", label: "我的穿搭", english: "My Outfits" },
           ].map((entry) => (
             <button
               key={entry.id}
@@ -714,7 +678,8 @@ export function StyleJournalExperience(props: Props) {
                 setParams(next, { replace: true });
               }}
             >
-              {entry.label}
+              <span>{entry.label}</span>
+              <span className="sj-tab-english" lang="en">{entry.english}</span>
             </button>
           ))}
         </nav>
