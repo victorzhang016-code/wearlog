@@ -3,6 +3,21 @@ import { Link, useLocation, type LinkProps } from "react-router";
 import type { BestMatch, WardrobeItem } from "../types";
 import { bundleEntriesFromMatch } from "../contexts/BestMatchContext";
 import { TagBundle } from "./TagBundle";
+import { ChevronDown } from "lucide-react";
+
+/** Native selection with an explicit action label; the result is the content below. */
+export function JournalSelect({ label, name, value, options, onChange }: {
+  label: string; name: string; value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return <label className="sj-select-action">
+    <span aria-hidden="true">{label}<span className="sj-select-count">{Math.max(0, options.findIndex(option => option.value === value)) + 1} / {options.length}</span><ChevronDown size={18} /></span>
+    <select aria-label={name} value={value} onChange={event => onChange(event.target.value)}>
+      {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+    </select>
+  </label>;
+}
 
 // A reading position lasts for this tab's session; no wardrobe data is stored.
 const readingPositions = new Map<string, {

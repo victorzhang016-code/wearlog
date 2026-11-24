@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import type { BestMatch, WardrobeItem } from '../types';
 import type { AnalysisRun } from '../lib/aestheticAnalysisV3';
 import { buildJournalInspiration } from '../lib/journalInspiration';
-import { JournalLink, JournalOutfitLink } from './JournalControls';
+import { JournalLink, JournalOutfitLink, JournalSelect } from './JournalControls';
 import { WardrobeItemCard } from './WardrobeItemCard';
 import './JournalInspiration.css';
 
@@ -23,7 +23,7 @@ export function JournalInspiration({ items, matches, run, preferredMatchId }: Pr
   if (!selected) return (
     <section className="sj-inspiration" aria-labelledby="sj-inspiration-title">
       <h2 id="sj-inspiration-title">换一件试试</h2>
-      <p className="sj-inspiration-empty">目前还没有可供比较的替换。保存搭配的备选单品后，可以在这里比较变化。</p>
+      <p className="sj-inspiration-empty">暂无可比较的替换。可以先给搭配添加备选。</p>
     </section>
   );
   return (
@@ -31,13 +31,8 @@ export function JournalInspiration({ items, matches, run, preferredMatchId }: Pr
       <div className="sj-section-heading">
         <div>
           <h2 id="sj-inspiration-title">换一件试试</h2>
-          <p>{selected.kind === 'new' ? '从衣柜里挑出的一种变化，还需要试穿。' : '你为原搭配留下的另一种选择。'}</p>
         </div>
-        {ideas.length > 1 && <label className="sj-select-label sj-inspiration-select">对比单品
-          <select value={selected.id} onChange={(event) => choose('idea', event.target.value)}>
-            {ideas.map((entry) => <option key={entry.id} value={entry.id}>{entry.match.name || '我的搭配'} · 换上{entry.to.name}</option>)}
-          </select>
-        </label>}
+        {ideas.length > 1 && <JournalSelect label="选择替换" name="对比单品" value={selected.id} options={ideas.map(entry => ({ value: entry.id, label: `${entry.match.name || '我的搭配'} · 换上${entry.to.name}` }))} onChange={value => choose('idea', value)} />}
       </div>
       <div className="sj-inspiration-context">
         <h3>「{selected.match.name || '我的搭配'}」换上「{selected.to.name}」</h3>
@@ -57,7 +52,7 @@ export function JournalInspiration({ items, matches, run, preferredMatchId }: Pr
           </figure>
         ))}
         <aside className="sj-inspiration-source">
-          <p>沿用这套搭配的其余单品</p>
+          <p>原搭配</p>
           <JournalOutfitLink match={selected.match} items={items} />
         </aside>
       </div>

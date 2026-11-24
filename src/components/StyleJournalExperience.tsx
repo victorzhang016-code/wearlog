@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import {
-  ArrowLeft,
+  RefreshCw,
   Shirt,
 } from "lucide-react";
 import type { BestMatch, WardrobeItem } from "../types";
@@ -163,7 +163,7 @@ function OutfitChapter({
       onGenerated({ fingerprint, insights: result.insights });
       chooseInsight("");
       if (!result.insights.length)
-        setNotice("暂时没有找到有充分记录支持的新结论，已有观察仍保留。");
+        setNotice("暂无新结论，已保留现有观察。");
     } catch (error) {
       if (!isCurrent()) return;
       setNotice(
@@ -183,22 +183,22 @@ function OutfitChapter({
         <div className="sj-section-heading sj-style-heading">
           <div>
             <h2>穿搭偏好</h2>
-            <p>从你的搭配和记录中，整理比例、细节与穿衣习惯。</p>
           </div>
           <div className="sj-analyze-action">
             <button
-              className="sj-button sj-button--primary header-action-button"
+              className="sj-button sj-analyze-button"
               disabled={
                 busy || evidence.filter((e) => e.story.trim()).length < 2
               }
               onClick={analyze}
             >
-              {busy ? "正在分析…" : generated ? "重新分析" : "分析穿搭偏好"}
+              <RefreshCw size={18} aria-hidden="true" />
+              {busy ? "正在分析…" : generated ? "重新分析" : "分析偏好"}
             </button>
             {evidence.filter((e) => e.story.trim()).length < 2 && (
               <span>至少为两套搭配添加说明后可分析</span>
             )}
-            {busy && <span role="status">正在阅读搭配记录，请稍候</span>}
+            {busy && <span className="sr-only" role="status">正在阅读搭配记录，请稍候</span>}
           </div>
         </div>
         {notice && (
@@ -246,10 +246,6 @@ export function StyleJournalExperience(props: Props) {
   return (
     <main className="style-journal">
       <header className="sj-header">
-        <Link to="/" className="back-link">
-          <ArrowLeft size={16} />
-          返回衣柜
-        </Link>
         <div className="sj-title-row">
           <div>
             <h1>我的风格志</h1>
@@ -279,7 +275,6 @@ export function StyleJournalExperience(props: Props) {
         <div className="sj-empty">
           <Shirt size={42} strokeWidth={1} />
           <h2>还没有衣物记录</h2>
-          <p>添加衣物、保存搭配后，在这里查看配色和穿搭分析。</p>
           <Link className="sj-button" to="/">
             添加衣物
           </Link>

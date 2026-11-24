@@ -50,7 +50,7 @@
 /* Preserve the fixed top / bottom / shoe positions in the comparison index. */
 .jcp-group-control { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
 .jcp-group-control label { font-size: 16px; white-space: nowrap; }
-.jcp-group-control select { min-width: 0; max-width: min(100%, 520px); min-height: 48px; padding: 10px 36px 10px 14px; border: 1px solid var(--sj-line, var(--color-rule)); border-radius: 0; background-color: var(--color-tag); color: var(--color-ink); font: inherit; font-size: 16px; cursor: pointer; }
+.jcp-group-control select { min-width: 0; max-width: min(100%, 520px); min-height: 48px; padding: 10px 30px 10px 0; border: 0; border-radius: 0; background: transparent; color: var(--color-ink); font: inherit; font-size: 17px; cursor: pointer; }
 .jcp-group-control select:focus-visible, .jcp-palette-look:focus-visible { outline: 2px solid var(--color-ink); outline-offset: 5px; }
 .jcp-palette-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 32px; row-gap: 36px; align-items: start; }
 .jcp-palette-look { display: block; min-width: 0; padding-top: 18px; color: inherit; text-decoration: none; cursor: pointer; }
@@ -59,15 +59,14 @@
 .jcp-slot-card { min-width: 0; padding: 6px 6px 0; background: var(--color-tag); border-radius: 2px; box-shadow: 1px 1px 0 rgb(0 0 0 / 4%), 2px 3px 8px rgb(0 0 0 / 13%), 4px 8px 20px rgb(0 0 0 / 8%); transition: transform 180ms ease, box-shadow 180ms ease; }
 .jcp-slot-face { display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: 3px; aspect-ratio: 1; min-width: 0; }
 .jcp-color-sample { display: block; min-width: 0; aspect-ratio: 1; box-shadow: inset 0 0 0 1px rgb(0 0 0 / 4%); }
-.jcp-slot-caption { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 4px; min-height: 37px; padding: 8px 2px; font-size: 14px; line-height: 1.5; }
-.jcp-slot-caption > span:last-child { color: var(--sj-muted, var(--color-graphite)); }
+.jcp-slot-caption { min-height: 37px; padding: 8px 2px; font-size: 15px; line-height: 1.5; }
 .jcp-empty-slot { align-self: center; padding: 5px; font-size: 14px; line-height: 1.5; color: var(--sj-muted, var(--color-graphite)); text-align: center; }
 .jcp-palette-look:hover .jcp-slot-card { transform: translateY(-3px); box-shadow: 1px 1px 0 rgb(0 0 0 / 4%), 2px 5px 10px rgb(0 0 0 / 15%), 4px 10px 22px rgb(0 0 0 / 8%); }
 .jcp-section .jcp-coverage { margin-top: 8px; font-size: 14px; color: var(--sj-muted, var(--color-graphite)); }
 .jcp-note { color: var(--sj-muted, var(--color-graphite)); }
 .jcp-method { max-width: 76ch; margin-top: 36px; color: var(--sj-muted, var(--color-graphite)); }
 .jcp-method p + p { margin-top: 10px; }
-.jcp-section .jcp-method p { font-size: 14px; }
+.jcp-section .jcp-method p { font-size: 15px; }
 
 @container journal (max-width: 850px) {
   .jcp-choices { gap: 30px 28px; padding: 32px; }

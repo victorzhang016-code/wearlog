@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { BestMatch, WardrobeItem } from '../types';
 import type { StyleInsight } from '../lib/styleInsights';
 import { bundleEntriesFromMatch } from '../contexts/BestMatchContext';
-import { JournalLink } from './JournalControls';
+import { JournalLink, JournalSelect } from './JournalControls';
 import { TagBundle } from './TagBundle';
 import './JournalInsightFolio.css';
 
@@ -36,12 +36,7 @@ export function JournalInsightFolio({ selected, stories, examples, items, onChoo
 }) {
   return <article className="sj-insight-folio">
     <div className="sj-folio-page">
-      {stories.length > 1 && <label className="sj-select-label sj-folio-selector">
-        穿搭观察
-        <select value={selected.id} onChange={event => onChoose(event.target.value)}>
-          {stories.map(story => <option key={story.id} value={story.id}>{story.title}</option>)}
-        </select>
-      </label>}
+      {stories.length > 1 && <div className="sj-folio-selector"><JournalSelect label="切换观察" name="穿搭观察" value={selected.id} options={stories.map(story => ({ value: story.id, label: story.title }))} onChange={onChoose} /></div>}
       <div className="sj-folio-reading">
         <h3>{selected.title}</h3>
         <p className="sj-folio-conclusion">{selected.summary}</p>
@@ -52,12 +47,11 @@ export function JournalInsightFolio({ selected, stories, examples, items, onChoo
       </div>
       <div className="sj-folio-colophon">
         <p>{selected.source === 'ai' ? 'AI 解读' : selected.source === 'computed' ? '搭配统计' : '记录整理'} · {selected.matchIds.length} 套搭配</p>
-        {selected.source === 'computed' && <p>只比较上下装宽窄已确认、且各有一件主件的记录。实穿比例仍需试穿判断。</p>}
-        <p>点选吊牌，查看完整搭配。</p>
+        {selected.source === 'computed' && <p>仅比较版型已确认、上下装各一件的搭配。</p>}
       </div>
     </div>
     <div className="sj-folio-evidence">
-      <p className="sj-folio-evidence-heading">你留下的搭配记录{examples.length > 1 && <span className="sj-folio-swipe"> · 左右滑动比较</span>}</p>
+      <p className="sj-folio-evidence-heading">搭配记录{examples.length > 1 && <span className="sj-folio-swipe"> · 左右滑动</span>}</p>
       <div className="sj-folio-outfits" data-count={examples.length} data-journal-scroll="insight-examples" tabIndex={0} role="region" aria-label="支持这条观察的搭配记录">
         {examples.map(match => <OutfitEvidence key={match.id} match={match} items={items} quote={selected.quotes.find(quote => quote.matchId === match.id)?.text} />)}
       </div>

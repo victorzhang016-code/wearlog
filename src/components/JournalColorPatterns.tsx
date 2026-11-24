@@ -48,7 +48,6 @@ function PaletteSamples({ samples }: { samples: PaletteSample[] }) {
             </div>
             <div className="jcp-slot-caption">
               <span>{slot}</span>
-              {!!colors.size && <span>{colors.size} 色</span>}
             </div>
           </div>
         );
@@ -70,11 +69,6 @@ function PaletteCase({ entry }: { entry: JournalPaletteCase }) {
     >
       <h3>{entry.match.name || "我的搭配"}</h3>
       <PaletteSamples samples={samples} />
-      {entry.confirmedItems < entry.totalItems && (
-        <p className="jcp-coverage">
-          {entry.totalItems - entry.confirmedItems} 件配饰的颜色尚未确认。
-        </p>
-      )}
     </JournalLink>
   );
 }
@@ -99,7 +93,7 @@ function choiceDescription(choice: PaletteChoice) {
     title: `${choice.family}色有 ${choice.itemIds.length} 件`,
     description: category
       ? `其中 ${category.count} 件是${category.name}。`
-      : "按已确认的单品颜色统计。",
+      : "",
   };
 }
 
@@ -137,7 +131,7 @@ export function JournalColorPatterns({
                   />
                   <figcaption>
                     <h3>{copy.title}</h3>
-                    <p>{copy.description}</p>
+                    {copy.description && <p>{copy.description}</p>}
                   </figcaption>
                 </figure>
               );
@@ -174,13 +168,12 @@ export function JournalColorPatterns({
         <div className="sj-section-heading">
           <div>
             <h2 id="sj-group-title">相似配色，放在一起看</h2>
-            <p>按主色的位置归类，保留实际色差。点选色卡查看搭配。</p>
           </div>
         </div>
         {selectedGroup ? (
           <>
             <div className="jcp-group-control">
-              <label htmlFor="journal-palette-group">配色分组</label>
+              <label className="sr-only" htmlFor="journal-palette-group">配色分组</label>
               <select
                 id="journal-palette-group"
                 value={selectedGroup.id}
@@ -204,10 +197,10 @@ export function JournalColorPatterns({
         )}
         <div className="jcp-method">
           <p>
-            {analysis.totalMatches} 套已保存搭配中，{analysis.cases.length} 套的主件和主色完整，可作比较。
-            {excludedCount > 0 && `另有 ${excludedCount} 套因主件缺失或主色未确认，暂未计入。`}
+            已整理 {analysis.cases.length} / {analysis.totalMatches} 套搭配。
+            {excludedCount > 0 && `另有 ${excludedCount} 套缺少主件或已确认的主色。`}
           </p>
-          <p>配对统计以第一件上装对照下装或鞋，每套计一次；色卡保留所有上装、下装和鞋的主色，同一位置的相同颜色合并，黑白灰合为基础色归类。方形色样等大拼合，不表示颜色面积。这里不包含备选、配饰、辅色和点缀色，也不代表实际穿着频率。</p>
+          <p>配对取第一件上装，每套计一次；色卡保留全部上装、下装和鞋的主色，黑白灰归为基础色。备选与配饰不计入，色样面积不表示占比。</p>
         </div>
       </section>
     </>

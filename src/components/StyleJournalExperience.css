@@ -100,58 +100,46 @@
   margin-top: 8px;
   max-width: 42ch;
 }
-.sj-button,
-.sj-more {
+.sj-button {
   display: inline-flex;
   justify-content: center;
   align-items: center;
   gap: 8px;
   min-height: 48px;
-  padding: 10px 18px;
-  border: 1px solid #736c5d;
-  background: #fdfcf5b3;
+  padding: 10px 2px;
+  border: 0;
+  background: transparent;
   color: var(--color-ink);
   font: 500 16px/1.5 var(--font-story);
-  border-radius: 3px;
+  border-radius: 0;
   text-decoration: none;
-  transition: background 0.18s;
+  transition: color 0.18s;
 }
-.sj-button:hover,
-.sj-more:hover {
-  background: var(--color-tag);
-}
-.sj-button--primary {
-  background: var(--color-ink);
-  color: var(--color-tag);
-  border-color: var(--color-ink);
-  min-height: 48px;
-}
-.sj-button--primary:hover {
-  background: #38362f;
-}
-.sj-more {
-  display: flex;
-  margin: 28px auto 0;
-}
+.sj-button:hover { color: var(--color-stamp); }
+.sj-analyze-button { white-space: nowrap; }
 .sj-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 24px;
 }
 .sj-filters button {
   min-height: 48px;
-  padding: 9px 15px;
-  border-radius: 3px;
+  position: relative;
+  padding: 9px 2px;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
   color: var(--sj-muted);
   font-size: 16px;
 }
 .sj-filters button:hover {
-  background: #fdfcf54d;
+  color: var(--color-ink);
 }
 .sj-filters button[aria-pressed="true"] {
-  background: var(--color-ink);
-  color: var(--color-tag);
+  color: var(--color-ink);
+  font-weight: 600;
 }
+.sj-filters button[aria-pressed="true"]::after { content: ''; position: absolute; bottom: 0; left: 2px; right: 2px; height: 2px; background: currentColor; }
 .sj-palette-intro {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -179,12 +167,17 @@
 .sj-analyze-action > span { font-size: 14px; color: var(--sj-muted); line-height: 1.7; }
 .sj-analysis-notice { margin-bottom: 20px; font-size: 16px; line-height: 1.8; }
 .sj-select-label { display: block; font-size: 15px; color: var(--sj-muted); }
-.sj-select-label select { display: block; width: 100%; max-width: 100%; min-height: 48px; margin: 10px 0 24px; padding: 10px 36px 10px 14px; border: 1px solid #736c5d; border-radius: 3px; font: 16px var(--font-story); color: var(--color-ink); background: var(--color-tag); text-overflow: ellipsis; }
+.sj-select-label select { display: block; width: 100%; max-width: 100%; min-height: 48px; margin: 0 0 24px; padding: 10px 30px 10px 0; border: 0; border-radius: 0; font: 500 17px var(--font-story); color: var(--color-ink); background: transparent; text-overflow: ellipsis; cursor: pointer; }
+.sj-select-action { position: relative; display: inline-flex; align-items: center; min-height: 48px; width: fit-content; max-width: 100%; color: var(--color-ink); font: 500 16px/1.5 var(--font-story); }
+.sj-select-action > span { display: inline-flex; align-items: center; gap: 12px; }
+.sj-select-count { color: var(--sj-muted); font-size: 16px; font-weight: 400; }
+.sj-select-action select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+.sj-select-action:has(select:focus-visible) { outline: 2px solid var(--color-ink); outline-offset: 4px; }
 .sj-ai-suggestion { margin-top: 24px; font-size: 16px; line-height: 1.9; }
 .sj-structure-observation { font-size: 16px; line-height: 1.9; margin-top: 24px; }
 .sj-outfit-link { display: block; min-width: 0; text-decoration: none; color: var(--color-ink); }
-.sj-outfit-surface { padding: 20px; border: 1px solid #6b6a6533; border-radius: 12px; background: #ffffff4d; transition: transform .2s ease, border-color .2s ease; }
-.sj-outfit-link:hover .sj-outfit-surface { transform: translateY(-4px); border-color: #6b6a6573; }
+.sj-outfit-surface { padding: 20px; border: 0; border-radius: 0; background: transparent; transition: transform .2s ease; }
+.sj-outfit-link:hover .sj-outfit-surface { transform: translateY(-4px); }
 .sj-outfit-link h4 { font-size: 18px; font-weight: 600; line-height: 1.6; margin-top: 18px; }
 .sj-outfit-link blockquote { font-size: 15px; line-height: 1.95; margin-top: 12px; color: var(--sj-muted); }
 .sj-item-link { display: block; min-width: 0; }
@@ -208,6 +201,7 @@
   .sj-section-heading h2 { font-size: 23px; }
   .sj-analyze-action { align-items: flex-start; max-width: none; }
   .sj-style-heading { margin-top: 28px; }
+  .sj-style-heading { flex-direction: row; align-items: center; gap: 12px; }
   .sj-empty { padding: 48px 12px; }
 }
 @container journal (max-width: 600px) {

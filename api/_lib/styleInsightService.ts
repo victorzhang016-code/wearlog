@@ -71,14 +71,29 @@ export async function analyzeStyleEvidence(
   const envelope = await response.json().catch(() => {
     throw new Error("分析结果未完整返回，请重试");
   });
-  const content = String(envelope.choices?.[0]?.message?.content || "")
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
+  const choice = envelope.choices?.[0];
+  const message = choice?.message;
+  const content = String(message?.content || "").trim();
+  // Accept only a complete Markdown wrapper around the entire JSON document.
+  // Never salvage a partial document or JSON embedded in explanatory prose.
+  const fenced = content.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   let raw: unknown;
   try {
-    raw = JSON.parse(content);
+    raw = JSON.parse(fenced ? fenced[1].trim() : content);
   } catch {
+    const tokenCount = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    // Metadata only: never log prompts, outfit IDs, model prose or reasoning.
+    console.warn("style_insight_invalid_json", {
+      provider: config.provider,
+      model: config.model,
+      finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason.slice(0, 40) : "unknown",
+      contentType: typeof message?.content,
+      contentLength: content.length,
+      reasoningLength: typeof message?.reasoning_content === "string" ? message.reasoning_content.length : 0,
+      promptTokens: tokenCount(envelope.usage?.prompt_tokens),
+      completionTokens: tokenCount(envelope.usage?.completion_tokens),
+      reasoningTokens: tokenCount(envelope.usage?.completion_tokens_details?.reasoning_tokens),
+    });
     throw new Error("这次分析未完成，请重试");
   }
   const insights = validateAIInsights(raw, evidence);
