@@ -1,0 +1,32 @@
+.sj-inspiration {
+  border-top: 1px solid var(--sj-line);
+  padding-top: 40px;
+}
+.sj-inspiration-select { width: min(100%, 360px); }
+.sj-inspiration-select select { width: 100%; margin: 8px 0 0; }
+.sj-inspiration-context { max-width: 720px; margin: 0 0 32px; }
+.sj-inspiration-context h3 { font-family: var(--font-story); font-weight: 500; font-size: 23px; line-height: 1.7; margin-bottom: 10px; }
+.sj-inspiration-context p, .sj-inspiration-empty { font-size: 16px; line-height: 1.9; }
+.sj-inspiration-garment { min-width: 0; margin: 0; }
+.sj-inspiration-garment > figcaption { margin-bottom: 20px; font-size: 16px; color: var(--color-graphite); }
+.sj-inspiration-source { padding-top: 44px; min-width: 0; }
+.sj-inspiration-source > p { font-size: 15px; line-height: 1.8; margin-bottom: 20px; }
+.sj-inspiration .sj-inspiration-toggle { display: none; }
+.sj-inspiration .sj-item-link { display: block; }
+.sj-inspiration .sj-item-link > * { pointer-events: none; }
+@media (max-width: 1024px) {
+  .sj-inspiration-source { padding-top: 12px; }
+}
+@container journal (max-width: 600px) {
+  .sj-inspiration { padding-top: 28px; }
+  .sj-inspiration-context { margin-bottom: 24px; }
+  .sj-inspiration-context h3 { font-size: 21px; }
+  .sj-inspiration .sj-inspiration-toggle { display: flex; width: fit-content; margin-bottom: 24px; }
+  .sj-inspiration-toggle button { min-height: 48px; min-width: 112px; }
+  .sj-inspiration .sj-inspiration-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .sj-inspiration-grid.is-original .sj-inspiration-replacement,
+  .sj-inspiration-grid.is-replacement .sj-inspiration-original { display: none; }
+  .sj-inspiration-garment > figcaption { display: none; }
+  .sj-inspiration-source { padding-top: 20px; }
+  .sj-inspiration-select { width: 100%; }
+}

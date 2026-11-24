@@ -70,6 +70,9 @@ export function AestheticProfilePage() {
             colors: currentRun.colors,
             substitutions: currentRun.substitutions,
             outfitCases: currentRun.outfitCases,
+            opportunities: currentRun.opportunities,
+            conceptRelations: currentRun.conceptRelations,
+            recommendationRuleVersion: currentRun.recommendationRuleVersion,
           }
         : currentRun,
     [syncedRun, currentRun],
@@ -90,7 +93,7 @@ export function AestheticProfilePage() {
         <p className="my-4 text-sm text-graphite">
           请重新加载后再试。
         </p>
-        <button className="back-link" onClick={() => window.location.reload()}>
+        <button className="sj-button" onClick={() => window.location.reload()}>
           <RefreshCw size={16} />
           重新加载
         </button>
@@ -106,7 +109,7 @@ export function AestheticProfilePage() {
           {notice}
           <button
             onClick={() => setRetry((value) => value + 1)}
-            className="underline underline-offset-4"
+            className="sj-button"
           >
             重新读取
           </button>

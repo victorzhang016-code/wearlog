@@ -202,3 +202,5 @@ Victor 允许“我的穿搭”先上线，第三轮界面已发布为 `c2a0dc4`
 ## 2026-11-22 色卡发布与双语入口
 
 Victor 明确要求新版色卡上线，并给两个章节补充英文 `My Colors` / `My Outfits`。沿用既有字体与两行入口，保留中文标签和选中下划线。此次不改变我的穿搭内容、Kimi 配置或数据库；原先线上仍是第三轮色卡，是新版未发布所致。发布前重新执行 34 项相关测试、lint 与 production build，均通过。
+
+发布结果：`4160c7245197be5e4163adc1b7ca5d67ca50a729` 已推送 main，Vercel GitHub 状态为 success（Deployment has completed），部署 ID `6mTpAS9tjyHjpRSCiMH36sUzeBEF`。正式站 `https://www.wearlog.cn/aesthetic?view=colors` 刷新登录会话后显示双语入口、蓝 24 / 黄 12 / 绿 9 件及蓝色上装 7 套分组，同组展开和穿搭切换通过；浏览器无脚本错误。375px 双语按钮均正常、无页面水平溢出。正式站截图 `.local-data/ui-review/journal-colors-live-4160c72.jpg`。本次未重新调用 AI；Vercel 连接器需要重新认证，发布状态通过现有 GitHub 集成核对，未检查服务端运行日志。

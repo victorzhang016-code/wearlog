@@ -1,5 +1,6 @@
+import { journalReturnTarget } from "../lib/journalNavigation";
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useNavigate, useParams, useLocation } from 'react-router';
 import { ArrowLeft, Edit2, Trash2, Loader2, Image as ImageIcon, Share2 } from 'lucide-react';
 import { ShareCardModal } from './ShareCardModal';
 import { buildBestMatchShareUrl } from '../lib/sharing';
@@ -19,6 +20,7 @@ import { resolveMediaUrl } from '../lib/media';
 export function BestMatchDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const journalReturn = journalReturnTarget(useLocation().state);
   const { items: wardrobe, loading: wardrobeLoading } = useWardrobe();
   const { matches: allMatches, loading: matchesLoading } = useBestMatches();
   const [match, setMatch] = useState<BestMatch | null>(null);
@@ -33,7 +35,7 @@ export function BestMatchDetail() {
   const closeWithAnimation = () => {
     sfx.filterClick();
     setBundleVisible(false);
-    window.setTimeout(() => navigate('/best-match'), 420);
+    window.setTimeout(() => navigate(journalReturn?.path || '/best-match'), 420);
   };
 
   useEffect(() => {
@@ -271,7 +273,7 @@ export function BestMatchDetail() {
       <BestMatchView
         match={match}
         itemMap={itemMap}
-        onItemClick={(itemId) => navigate(`/item/${itemId}`)}
+        onItemClick={(itemId) => navigate(`/item/${itemId}`, { state: journalReturn ? { journalReturnTo: journalReturn.path, journalParent: `/best-match/${match.id}` } : undefined })}
         bundleCollapsed={!bundleVisible}
         backSlot={
           <button
@@ -279,7 +281,7 @@ export function BestMatchDetail() {
             className="back-link"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>返回搭配列表</span>
+            <span>{journalReturn?.label || "返回搭配列表"}</span>
           </button>
         }
         actionsSlot={

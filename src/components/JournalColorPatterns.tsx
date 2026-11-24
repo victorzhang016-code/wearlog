@@ -1,15 +1,14 @@
-import { useState } from "react";
-import { Link } from "react-router";
-import { ArrowRight, ChevronDown } from "lucide-react";
+import { useSearchParams } from "react-router";
 import type { BestMatch } from "../types";
 import type { PerceptualColor } from "../lib/aestheticAnalysisV3";
-import { COLOR_ROLE_LABELS } from "../lib/styleJournalView";
 import {
   journalPaletteAnalysis,
   type JournalPaletteCase,
   type PaletteSample,
 } from "../lib/journalPaletteAnalysis";
+import { JournalLink } from "./JournalControls";
 import { ColorSwatchCard } from "./ColorSwatchCard";
+import "./JournalColorPatterns.css";
 
 export const swatchRGB = (color: PerceptualColor) => ({
   r: color.rgb[0],
@@ -18,180 +17,152 @@ export const swatchRGB = (color: PerceptualColor) => ({
 });
 
 function PaletteSamples({ samples }: { samples: PaletteSample[] }) {
-  const unique = [
-    ...new Map(
-      samples.map((sample) => [
-        `${sample.slot}:${sample.color.hex}:${sample.color.role}`,
-        sample,
-      ]),
-    ).values(),
-  ];
   return (
-    <div className="sj-palette-comparison" aria-label="搭配色卡">
-      {unique.map((sample) => (
-        <ColorSwatchCard
-          key={`${sample.slot}:${sample.color.hex}:${sample.color.role}`}
-          color={swatchRGB(sample.color)}
-          code={sample.color.hex}
-          role={`${sample.slot} · ${COLOR_ROLE_LABELS[sample.color.role]}`}
-        />
-      ))}
+    <div className="jcp-samples" aria-label="上装、下装和鞋的主色色卡">
+      {["上装", "下装", "鞋"].map((slot) => {
+        // A slot is one comparison column. Repeated HEX values share a sample,
+        // but retain every garment source; no averaging or area inference.
+        const colors = new Map<string, { color: PerceptualColor; sources: Set<string> }>();
+        samples.filter((sample) => sample.slot === slot).forEach((sample) => {
+          const key = sample.color.hex.toUpperCase();
+          const entry = colors.get(key) || { color: sample.color, sources: new Set<string>() };
+          entry.sources.add(`${sample.itemName} · ${sample.color.hex}`);
+          colors.set(key, entry);
+        });
+        const columns = Math.ceil(Math.sqrt(colors.size || 1));
+        return (
+          <div key={slot} className="jcp-slot-card">
+            <div className="jcp-slot-face" aria-label={`${slot}：${colors.size ? `${colors.size} 种主色` : "未搭配"}`}>
+              {colors.size ? [...colors.entries()].map(([hex, entry]) => (
+                <span
+                  key={hex}
+                  className="jcp-color-sample"
+                  style={{
+                    backgroundColor: `rgb(${entry.color.rgb.join(",")})`,
+                    flexBasis: `calc((100% - ${(columns - 1) * 3}px) / ${columns})`,
+                  }}
+                  title={[...entry.sources].join("\n")}
+                  aria-label={[...entry.sources].join("；")}
+                />
+              )) : <span className="jcp-empty-slot">未搭配{slot}</span>}
+            </div>
+            <div className="jcp-slot-caption">
+              <span>{slot}</span>
+              {!!colors.size && <span>{colors.size} 色</span>}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 function PaletteCase({ entry }: { entry: JournalPaletteCase }) {
-  const isMainGarment = (sample: PaletteSample) =>
-    sample.color.role === "dominant" && sample.slot !== "配饰";
-  const details = entry.samples.filter((s) => !isMainGarment(s));
+  const samples = entry.samples.filter((sample) =>
+    sample.color.role === "dominant" && sample.slot !== "配饰",
+  );
   return (
-    <div className="sj-palette-case">
-      <div className="sj-palette-case-heading">
-        <h4>{entry.match.name || "我的搭配"}</h4>
-        <Link to={`/best-match/${entry.match.id}`}>
-          查看搭配 <ArrowRight size={16} />
-        </Link>
-      </div>
-      <PaletteSamples samples={entry.samples.filter(isMainGarment)} />
-      {!!details.length && (
-        <details className="sj-palette-detail">
-          <summary>
-            查看配饰、辅色与点缀色 <ChevronDown size={16} />
-          </summary>
-          <PaletteSamples samples={details} />
-        </details>
-      )}
+    <JournalLink
+      className="jcp-palette-look"
+      to={`/best-match/${entry.match.id}`}
+      aria-label={`查看搭配：${entry.match.name || "我的搭配"}`}
+      title={`查看搭配：${entry.match.name || "我的搭配"}`}
+    >
+      <h3>{entry.match.name || "我的搭配"}</h3>
+      <PaletteSamples samples={samples} />
       {entry.confirmedItems < entry.totalItems && (
-        <p className="sj-caption">
-          已确认 {entry.confirmedItems} / {entry.totalItems}{" "}
-          件单品的颜色，其余未计入色卡。
+        <p className="jcp-coverage">
+          {entry.totalItems - entry.confirmedItems} 件配饰的颜色尚未确认。
         </p>
       )}
-    </div>
+    </JournalLink>
   );
+}
+
+type PaletteChoice = ReturnType<typeof journalPaletteAnalysis>["choices"][number];
+
+function choiceDescription(choice: PaletteChoice) {
+  const roles = [
+    { label: "主色", count: choice.dominant },
+    { label: "辅色", count: choice.secondary },
+    { label: "点缀", count: choice.accent },
+  ].sort((a, b) => b.count - a.count);
+  const leading = roles[0];
+  if (leading.count > roles[1].count) {
+    return {
+      title: `${choice.family}色多用作${leading.label}`,
+      description: `其中 ${leading.count} 件用作${leading.label}。`,
+    };
+  }
+  const category = choice.categories[0];
+  return {
+    title: `${choice.family}色有 ${choice.itemIds.length} 件`,
+    description: category
+      ? `其中 ${category.count} 件是${category.name}。`
+      : "按已确认的单品颜色统计。",
+  };
 }
 
 export function JournalColorPatterns({
   analysis,
-  matches,
 }: {
   analysis: ReturnType<typeof journalPaletteAnalysis>;
   matches: BestMatch[];
 }) {
-  const [allGroups, setAllGroups] = useState(false);
-  const repeated = analysis.groups
-    .filter((group) => !group.neutralOnly && group.cases.length >= 2)
-    .slice(0, 3);
-  const featured = repeated.length ? repeated : analysis.groups.slice(0, 3);
-  const displayed = allGroups ? analysis.groups : featured;
+  const [params, setParams] = useSearchParams();
+  const defaultGroup = analysis.groups.find((group) => !group.neutralOnly && group.cases.length >= 2)
+    || analysis.groups.find((group) => !group.neutralOnly)
+    || analysis.groups[0];
+  const selectedGroup = analysis.groups.find((group) => group.id === params.get("paletteGroup"))
+    || defaultGroup;
+  const excludedCount = analysis.totalMatches - analysis.cases.length;
+
   return (
     <>
-      <section aria-labelledby="sj-choice-title">
+      <section className="jcp-section" aria-labelledby="sj-choice-title">
         <div className="sj-section-heading">
-          <div>
-            <h2 id="sj-choice-title">黑白灰之外的选择</h2>
-            <p>看看你把哪些颜色留在了衣柜里。</p>
-          </div>
+          <h2 id="sj-choice-title">黑白灰之外的选择</h2>
         </div>
         {analysis.choices.length ? (
-          <div className="sj-color-preferences">
-            {analysis.choices.slice(0, 3).map((choice) => (
-              <figure key={choice.family}>
-                <ColorSwatchCard
-                  color={swatchRGB(choice.color)}
-                  role={`${choice.family}色`}
-                  code={`${choice.itemIds.length} 件衣物`}
-                />
-                <figcaption>
-                  <h3>
-                    {choice.family}色
-                    {choice.dominant > Math.max(choice.secondary, choice.accent)
-                      ? "更多作主色"
-                      : choice.accent >
-                          Math.max(choice.dominant, choice.secondary)
-                        ? "更多作点缀"
-                        : choice.secondary >
-                            Math.max(choice.dominant, choice.accent)
-                          ? "更多作辅色"
-                          : "的使用"}
-                  </h3>
-                  <p>
-                    {[
-                      choice.dominant && `${choice.dominant} 件用作主色`,
-                      choice.secondary && `${choice.secondary} 件带有辅色`,
-                      choice.accent && `${choice.accent} 件用作点缀`,
-                    ]
-                      .filter(Boolean)
-                      .join("，")}
-                    。
-                  </p>
-                  <span className="sj-caption">
-                    {choice.categories
-                      .map((c) => `${c.name} ${c.count} 件`)
-                      .join(" · ")}
-                  </span>
-                </figcaption>
-              </figure>
-            ))}
+          <div className="jcp-choices">
+            {analysis.choices.slice(0, 3).map((choice, index) => {
+              const copy = choiceDescription(choice);
+              return (
+                <figure key={choice.family} className={index === 0 ? "jcp-choice-main" : "jcp-choice-support"}>
+                  <ColorSwatchCard
+                    className="jcp-swatch"
+                    color={swatchRGB(choice.color)}
+                    role={`${choice.family}色衣物`}
+                    code={`${choice.itemIds.length} 件`}
+                  />
+                  <figcaption>
+                    <h3>{copy.title}</h3>
+                    <p>{copy.description}</p>
+                  </figcaption>
+                </figure>
+              );
+            })}
           </div>
         ) : (
-          <p className="sj-caption">
-            已确认的衣物颜色以黑白灰为主。更多颜色确认后会补充在这里。
-          </p>
-        )}
-        {!!analysis.choices.length && (
-          <p className="sj-color-method">
-            颜色角色按单品记录统计，同一件可以包含多个角色。
-          </p>
+          <p className="jcp-note">目前已确认的颜色以黑白灰为主。</p>
         )}
       </section>
 
       {!!analysis.pairings.length && (
-        <section aria-labelledby="sj-pair-title">
+        <section className="jcp-section" aria-labelledby="sj-pair-title">
           <div className="sj-section-heading">
-            <div>
-              <h2 id="sj-pair-title">你搭在一起的颜色</h2>
-              <p>从已保存的搭配中，查看上装与下装、鞋的主色关系。</p>
-            </div>
+            <h2 id="sj-pair-title">你搭在一起的颜色</h2>
           </div>
-          <div className="sj-color-relations">
-            {analysis.pairings.slice(0, 3).map((pair) => (
+          <div className="jcp-pairings">
+            {analysis.pairings.slice(0, 3).map((pair, index) => (
               <article key={pair.id}>
-                <div className="sj-color-duet">
-                  <ColorSwatchCard
-                    color={swatchRGB(pair.fromColor)}
-                    role={`${pair.from}色上装`}
-                    code={pair.fromColor.hex}
-                  />
-                  <span aria-hidden="true">＋</span>
-                  <ColorSwatchCard
-                    color={swatchRGB(pair.toColor)}
-                    role={`${pair.to}色${pair.slot === "bottoms" ? "下装" : "鞋"}`}
-                    code={pair.toColor.hex}
-                  />
+                <div className="jcp-duet">
+                  <ColorSwatchCard className="jcp-swatch" color={swatchRGB(pair.fromColor)} role="上装" code={`${pair.from}色`} />
+                  <ColorSwatchCard className="jcp-swatch" color={swatchRGB(pair.toColor)} role={pair.slot === "bottoms" ? "下装" : "鞋"} code={`${pair.to}色`} />
                 </div>
-                <div>
-                  <h3>
-                    {pair.from}色上装配{pair.to}色
-                    {pair.slot === "bottoms" ? "下装" : "鞋"}
-                  </h3>
-                  <p>
-                    {pair.total} 套可比较的{pair.from}色上装搭配中，{pair.count}{" "}
-                    套这样选。
-                  </p>
-                  <details className="sj-palette-detail">
-                    <summary>
-                      查看 {pair.count} 套记录 <ChevronDown size={16} />
-                    </summary>
-                    <div className="sj-case-links">
-                      {pair.matchIds.map((id) => (
-                        <Link key={id} to={`/best-match/${id}`}>
-                          {matches.find((m) => m.id === id)?.name || "我的搭配"}
-                          <ArrowRight size={14} />
-                        </Link>
-                      ))}
-                    </div>
-                  </details>
+                <div className="jcp-pair-copy">
+                  {index === 0 && <h3>{pair.from}色上装配{pair.to}色{pair.slot === "bottoms" ? "下装" : "鞋"}</h3>}
+                  <p>{pair.total} 套{pair.from}色上装搭配中，{pair.count} 套配{pair.to}色{pair.slot === "bottoms" ? "下装" : "鞋"}。</p>
                 </div>
               </article>
             ))}
@@ -199,66 +170,45 @@ export function JournalColorPatterns({
         </section>
       )}
 
-      <section aria-labelledby="sj-group-title">
+      <section className="jcp-section" aria-labelledby="sj-group-title">
         <div className="sj-section-heading">
           <div>
             <h2 id="sj-group-title">相似配色，放在一起看</h2>
-            <p>按上装、下装和鞋的主色归类，黑白灰合为基础色。</p>
+            <p>按主色的位置归类，保留实际色差。点选色卡查看搭配。</p>
           </div>
-          <span className="sj-caption">
-            {analysis.cases.length} / {analysis.totalMatches} 套颜色可比较
-          </span>
         </div>
-        {analysis.groups.length ? (
-          <div className="sj-palette-groups">
-            {displayed.map((group) => (
-              <article className="sj-palette-group" key={group.id}>
-                <div className="sj-palette-group-heading">
-                  <h3>{group.title}</h3>
-                  <span>{group.cases.length} 套</span>
-                </div>
-                <PaletteCase entry={group.cases[0]} />
-                {group.cases.length > 1 && (
-                  <details className="sj-palette-detail sj-group-compare">
-                    <summary>
-                      对比同组其余 {group.cases.length - 1} 套色卡{" "}
-                      <ChevronDown size={16} />
-                    </summary>
-                    {group.cases.slice(1).map((entry) => (
-                      <PaletteCase key={entry.match.id} entry={entry} />
-                    ))}
-                  </details>
-                )}
-              </article>
-            ))}
-          </div>
+        {selectedGroup ? (
+          <>
+            <div className="jcp-group-control">
+              <label htmlFor="journal-palette-group">配色分组</label>
+              <select
+                id="journal-palette-group"
+                value={selectedGroup.id}
+                onChange={(event) => {
+                  const next = new URLSearchParams(params);
+                  next.set("paletteGroup", event.target.value);
+                  setParams(next, { replace: true });
+                }}
+              >
+                {analysis.groups.map((group) => (
+                  <option key={group.id} value={group.id}>{group.title} · {group.cases.length} 套</option>
+                ))}
+              </select>
+            </div>
+            <div className="jcp-palette-grid" aria-label={`${selectedGroup.title}，${selectedGroup.cases.length} 套搭配`}>
+              {selectedGroup.cases.map((entry) => <PaletteCase key={entry.match.id} entry={entry} />)}
+            </div>
+          </>
         ) : (
-          <p className="sj-caption">
-            确认搭配中上装、下装和鞋的主色后，就能按配色归类。
-          </p>
+          <p className="jcp-note">确认上装、下装和鞋的主色后，搭配就会出现在这里。</p>
         )}
-        {analysis.groups.length > featured.length && (
-          <button className="sj-more" onClick={() => setAllGroups((v) => !v)}>
-            {allGroups
-              ? "收起配色分组"
-              : `查看其他 ${analysis.groups.length - featured.length} 组配色`}
-            <ChevronDown size={16} />
-          </button>
-        )}
-        <details className="sj-palette-detail sj-counting-note">
-          <summary>
-            这些统计怎么计算 <ChevronDown size={16} />
-          </summary>
+        <div className="jcp-method">
           <p>
-            只使用当前衣物已确认的颜色。每套搭配计一次，不展开备选单品；主件缺失或上装、下装、鞋的主色未确认时，不计入可比较的搭配。
+            {analysis.totalMatches} 套已保存搭配中，{analysis.cases.length} 套的主件和主色完整，可作比较。
+            {excludedCount > 0 && `另有 ${excludedCount} 套因主件缺失或主色未确认，暂未计入。`}
           </p>
-          <p>
-            配色关系以每套第一件上装对照下装或鞋，同一条关系在一套里最多计一次。配饰不参与关系计数；相似分组只比较衣物和鞋的主色位置，辅色、点缀色和配饰保留在每套色卡中。
-          </p>
-          <p>
-            这里呈现保存记录中的选择，不代表实际穿着频率或搭配效果。单品颜色角色不代表整套穿搭的颜色面积。色卡保留原始颜色，同色系不代表颜色完全相同。
-          </p>
-        </details>
+          <p>配对统计以第一件上装对照下装或鞋，每套计一次；色卡保留所有上装、下装和鞋的主色，同一位置的相同颜色合并，黑白灰合为基础色归类。方形色样等大拼合，不表示颜色面积。这里不包含备选、配饰、辅色和点缀色，也不代表实际穿着频率。</p>
+        </div>
       </section>
     </>
   );

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation, useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'motion/react';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -217,8 +217,13 @@ function PageRoutes() {
 
 function ScrollToTop() {
   const location = useLocation();
+  const previousPath = useRef<string | undefined>(undefined);
 
   useEffect(() => {
+    const previous = previousPath.current;
+    previousPath.current = location.pathname;
+    // Journal selectors change the current reading context in place.
+    if (location.pathname === "/aesthetic" && previous === location.pathname) return;
     window.scrollTo(0, 0);
   }, [location.pathname, location.search]);
 

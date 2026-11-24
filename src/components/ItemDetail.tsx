@@ -1,5 +1,6 @@
+import { journalReturnTarget, journalParentTarget } from "../lib/journalNavigation";
 import { useState, useEffect, useMemo, type CSSProperties } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useLocation } from 'react-router';
 import { auth } from '../lib/authCompat';
 import { deleteWardrobeItem } from '../lib/supabaseData';
 import { WardrobeItem } from '../types';
@@ -21,6 +22,9 @@ import { ItemAestheticPanel } from './ItemAestheticPanel';
 export function ItemDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const navigationState = useLocation().state;
+  const journalReturn = journalReturnTarget(navigationState);
+  const journalParent = journalParentTarget(navigationState);
   const [item, setItem] = useState<WardrobeItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<LoadErrorKind | null>(null);
@@ -138,11 +142,11 @@ export function ItemDetail() {
       {/* Back nav */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4 sm:mb-5">
         <button
-          onClick={() => { sfx.filterClick(); navigate('/'); }}
+          onClick={() => { sfx.filterClick(); navigate(journalParent?.path || journalReturn?.path || '/', { state: journalReturn ? { journalReturnTo: journalReturn.path } : undefined }); }}
           className="back-link"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>返回衣柜</span>
+          <span>{journalParent?.label || journalReturn?.label || "返回衣柜"}</span>
         </button>
         <div className="flex items-center gap-2">
           <button
@@ -370,7 +374,7 @@ export function ItemDetail() {
                 <div
                   key={m.id}
                   onMouseEnter={() => sfx.cardHover()}
-                  onClick={() => { sfx.cardClick(); navigate(`/best-match/${m.id}`); }}
+                  onClick={() => { sfx.cardClick(); navigate(`/best-match/${m.id}`, { state: journalReturn ? { journalReturnTo: journalReturn.path } : undefined }); }}
                   className="min-w-0 rounded-xl bg-white/30 border border-graphite/20 hover:border-graphite/45 hover:-translate-y-1 transition-all p-2 sm:p-3 cursor-pointer"
                 >
                   {entries.length > 0 && (
@@ -378,7 +382,7 @@ export function ItemDetail() {
                       entries={entries}
                       size="mini"
                       className="mx-auto"
-                      onItemClick={(it) => { sfx.cardClick(); navigate(`/item/${it.id}`); }}
+                      onItemClick={(it) => { sfx.cardClick(); navigate(`/item/${it.id}`, { state: navigationState }); }}
                     />
                   )}
                   {m.name && (
